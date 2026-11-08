@@ -26,16 +26,35 @@ const bufToB64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i 
 
 // Turn any error body (string, {error}, {detail: string | [{loc, msg}]}) into a readable message.
 function errText(status, d) {
-  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { return `HTTP ${status}: ${d.slice(0, 200)}`; } }
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { d = { error: d.slice(0, 200) }; } }
   let m = d?.error || d?.message || d?.detail;
   if (Array.isArray(m)) m = m.map(e => `${(e.loc || []).filter(x => x !== 'body').join('.') || 'request'}: ${e.msg}`).join('; ');
   else if (m && typeof m === 'object') m = JSON.stringify(m);
-  return `HTTP ${status}: ${m || 'request failed'}`;
+  const hint = { 502: ' — the AI server is not running behind this link. In Colab, re-run the "Start the server" cell, then check server.log.',
+    530: ' — this Cloudflare link has expired. Copy the new link from Colab into Settings.', 1033: ' — this Cloudflare link has expired.',
+    401: ' — wrong or missing server token. It must match API_TOKEN in Colab (leave both empty if you did not set one).' }[status] || '';
+  if (typeof m === 'string' && /<html|<!doctype/i.test(m)) m = '';
+  return `HTTP ${status}: ${m || 'request failed'}${hint}`;
 }
 
 // native=false uses the WebView's fetch (our own server sends CORS headers, so that's all it needs);
 // native=true uses Android's HTTP stack, needed for third-party APIs without CORS (Meshy, Tripo).
-async function http(url, { method = 'GET', headers = {}, json, binary, native = true } = {}) {
+const isNetErr = e => e instanceof TypeError || /failed to fetch|load failed|network|unable to resolve|timed? ?out|connect|refused|ssl|host/i.test(e.message || '');
+async function http(url, opts = {}) {
+  try {
+    if (opts.native === false && NATIVE) {
+      // WebView fetch first; if it fails at the network/CORS level, retry natively to get the real status.
+      try { return await httpOnce(url, opts); }
+      catch (e) { if (isNetErr(e)) return await httpOnce(url, { ...opts, native: true }); throw e; }
+    }
+    return await httpOnce(url, opts);
+  } catch (e) {
+    if (!/^HTTP \d/.test(e.message) && isNetErr(e))
+      throw new Error(`Can't reach ${new URL(url).host} (${e.message}). Check that the Colab notebook is still running and that Settings has its latest link.`);
+    throw e;
+  }
+}
+async function httpOnce(url, { method = 'GET', headers = {}, json, binary, native = true } = {}) {
   if (json !== undefined) headers = { ...headers, 'Content-Type': 'application/json' };
   if (NATIVE && native) {
     const r = await Cap.Plugins.CapacitorHttp.request({ url, method, headers, data: json,

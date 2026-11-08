@@ -194,7 +194,6 @@ threading.Thread(target=worker, daemon=True).start()
 
 # ----------------------------------------------------------------------------- API
 app = FastAPI(title="Model Forge AI server")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 @app.middleware("http")
@@ -203,7 +202,16 @@ async def auth(request: Request, call_next):
         if request.headers.get("authorization") != f"Bearer {API_TOKEN}":
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
-    return await call_next(request)
+    try:
+        return await call_next(request)
+    except Exception as e:  # keep CORS headers on crashes so the app can show the message
+        traceback.print_exc()
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": f"Server error: {e}"}, status_code=500)
+
+
+# Added last = outermost, so every response (401s and errors included) carries CORS headers.
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 def bad(msg):
