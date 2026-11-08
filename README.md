@@ -28,6 +28,8 @@ Every push to `main` builds a new APK automatically (see [`.github/workflows/and
 2. Choose **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**.
 3. Copy the `https://….trycloudflare.com` URL it prints.
 
+**C. AWS EC2 (always on, stable address)**: see [`server/ec2/README.md`](server/ec2/README.md). It's one command on a GPU instance.
+
 **B. Your own PC** (NVIDIA GPU with 8 GB or more of VRAM; 16 GB for textures; Linux or WSL)
 ```bash
 cd server && ./setup.sh && python server.py
