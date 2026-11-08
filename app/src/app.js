@@ -24,25 +24,30 @@ const serverBase = () => (settings.server || '').trim().replace(/\/+$/, '');
 const b64ToBuf = b64 => { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
 const bufToB64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 
-async function http(url, { method = 'GET', headers = {}, json, binary } = {}) {
+// Turn any error body (string, {error}, {detail: string | [{loc, msg}]}) into a readable message.
+function errText(status, d) {
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { return `HTTP ${status}: ${d.slice(0, 200)}`; } }
+  let m = d?.error || d?.message || d?.detail;
+  if (Array.isArray(m)) m = m.map(e => `${(e.loc || []).filter(x => x !== 'body').join('.') || 'request'}: ${e.msg}`).join('; ');
+  else if (m && typeof m === 'object') m = JSON.stringify(m);
+  return `HTTP ${status}: ${m || 'request failed'}`;
+}
+
+// native=false uses the WebView's fetch (our own server sends CORS headers, so that's all it needs);
+// native=true uses Android's HTTP stack, needed for third-party APIs without CORS (Meshy, Tripo).
+async function http(url, { method = 'GET', headers = {}, json, binary, native = true } = {}) {
   if (json !== undefined) headers = { ...headers, 'Content-Type': 'application/json' };
-  if (NATIVE) {
+  if (NATIVE && native) {
     const r = await Cap.Plugins.CapacitorHttp.request({ url, method, headers, data: json,
       responseType: binary ? 'arraybuffer' : 'json', connectTimeout: 30000, readTimeout: 120000 });
     let data = r.data;
-    if (r.status >= 400) {
-      if (typeof data === 'string') { try { data = JSON.parse(data); } catch {} }
-      throw new Error(`HTTP ${r.status}: ${data?.detail || data?.error || data?.message || (typeof data === 'string' ? data.slice(0, 200) : '')}`);
-    }
+    if (r.status >= 400) throw new Error(errText(r.status, data));
     if (binary) return typeof data === 'string' ? b64ToBuf(data) : data;
     if (typeof data === 'string') { try { data = JSON.parse(data); } catch {} }
     return data;
   }
   const r = await fetch(url, { method, headers, body: json !== undefined ? JSON.stringify(json) : undefined });
-  if (!r.ok) {
-    const t = await r.text(); let d; try { d = JSON.parse(t); } catch {}
-    throw new Error(`HTTP ${r.status}: ${d?.detail || d?.error || d?.message || t.slice(0, 200)}`);
-  }
+  if (!r.ok) throw new Error(errText(r.status, await r.text()));
   return binary ? r.arrayBuffer() : r.json();
 }
 
@@ -55,12 +60,12 @@ const ENGINES = {
     ready: () => !!serverBase(),
     async create(req) {
       if (req.mode === 'refine') throw new Error('Your server textures models directly — tick "Generate textures" and generate again.');
-      const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(),
+      const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(), native: false,
         json: { mode: req.mode, prompt: req.prompt, image: req.image, images: req.images, texture: req.texture, polycount: req.polycount } });
       return d.task_id;
     },
     async status(id) {
-      const d = await http(`${serverBase()}/status/${id}`, { headers: authH() });
+      const d = await http(`${serverBase()}/status/${id}`, { headers: authH(), native: false });
       return { status: d.status, progress: d.progress, stage: d.stage, error: d.error,
         modelUrl: d.model_url && serverBase() + d.model_url, thumbnail: d.thumbnail_url && serverBase() + d.thumbnail_url };
     },
@@ -372,7 +377,7 @@ async function openJob(job) {
   if (job.demo) { showModel(demoModel(job.prompt)); $('#job-status').textContent = 'Done'; return; }
   try {
     $('#job-status').textContent = 'Downloading model…';
-    const buf = await http(job.modelUrl, { binary: true, headers: job.provider === 'server' ? authH() : {} });
+    const buf = await http(job.modelUrl, { binary: true, headers: job.provider === 'server' ? authH() : {}, native: job.provider !== 'server' });
     const gltf = await new GLTFLoader().parseAsync(buf, '');
     showModel(gltf.scene); $('#job-status').textContent = 'Done';
   } catch (e) { showError(`Could not load model (cloud links expire, and Colab servers stop when closed): ${e.message}`); }
@@ -427,8 +432,8 @@ $('#s-test').onclick = async () => {
   if (!url) { out.textContent = 'Enter the server URL first.'; out.className = 'small error'; return; }
   out.textContent = 'Connecting…'; out.className = 'small';
   try {
-    const d = await http(`${url}/health`);
-    out.textContent = `✓ Connected — GPU: ${d.gpu || 'none'}, textures: ${d.texture ? 'on' : 'off'}, multi-view: ${d.multiview ? 'yes' : 'no (update server)'}`; out.className = 'small ok';
+    const d = await http(`${url}/health`, { native: false });
+    out.textContent = `✓ Connected — GPU: ${d.gpu || 'none'}, textures: ${d.texture ? 'on' : 'off'}, multi-view: ${d.multiview ? 'yes' : 'no'}${d.version >= 2 ? '' : ' — ⚠ old server code: re-run the Colab notebook'}`; out.className = 'small ok';
   } catch (e) { out.textContent = '✗ ' + e.message; out.className = 'small error'; }
 };
 

@@ -23,13 +23,13 @@ Environment variables:
   API_TOKEN     if set, clients must send "Authorization: Bearer <token>"
   PORT          default 8000
 """
-import base64, io, os, threading, time, traceback, uuid, queue
+import base64, io, json, os, threading, time, traceback, uuid, queue
+from urllib.parse import parse_qs
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from PIL import Image
 
 OUT = Path(os.environ.get("OUTPUT_DIR", Path(__file__).parent / "outputs"))
@@ -206,41 +206,85 @@ async def auth(request: Request, call_next):
     return await call_next(request)
 
 
-class GenerateReq(BaseModel):
-    mode: str
-    prompt: str | None = None
-    image: str | None = None
-    images: dict[str, str] | None = None
-    texture: bool = True
-    polycount: int | None = 40000
-    steps: int | None = 30
-    seed: int | None = None
+def bad(msg):
+    raise HTTPException(400, msg)
+
+
+def to_int(v, name, default):
+    if v in (None, ""):
+        return default
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        bad(f"{name} must be a number, got {v!r:.40}")
+
+
+def to_bool(v, default=True):
+    if v is None:
+        return default
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(v)
+
+
+async def read_body(request: Request) -> dict:
+    """Accept JSON (also double-encoded JSON) or form-encoded bodies, whatever the client sends."""
+    raw = await request.body()
+    ctype = request.headers.get("content-type", "")
+    body = None
+    try:
+        body = json.loads(raw or b"{}")
+        if isinstance(body, str):  # double-encoded
+            body = json.loads(body)
+    except Exception:
+        if "form" in ctype:
+            body = {k: v[0] for k, v in parse_qs(raw.decode("utf-8", "replace")).items()}
+    if not isinstance(body, dict):
+        bad(f"Expected a JSON object in the request body (content-type: {ctype or 'none'}, {len(raw)} bytes)")
+    if isinstance(body.get("images"), str):
+        try:
+            body["images"] = json.loads(body["images"])
+        except Exception:
+            bad("images must be an object like {front, left, back, right}")
+    return body
+
+
+@app.exception_handler(HTTPException)
+async def http_error(request: Request, exc: HTTPException):
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"error": str(exc.detail), "detail": str(exc.detail)}, status_code=exc.status_code)
 
 
 @app.get("/health")
 def health():
     import torch
     return {"ok": True, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "multiview": True, "mv_model": MV_MODEL, "queue": jobs.qsize(),
-            "auth": bool(API_TOKEN)}
+            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "multiview": True, "mv_model": MV_MODEL,
+            "queue": jobs.qsize(), "auth": bool(API_TOKEN), "version": 2}
 
 
 @app.post("/generate")
-def generate(body: GenerateReq):
-    if body.mode not in ("text", "image", "multiview"):
-        raise HTTPException(400, "mode must be text, image or multiview")
-    if body.mode == "multiview":
-        imgs = {k: v for k, v in (body.images or {}).items() if k in MV_VIEWS and v}
+async def generate(request: Request):
+    b = await read_body(request)
+    print("generate request:", {k: (type(v).__name__, len(v) if isinstance(v, (str, dict)) else v) for k, v in b.items()}, flush=True)
+    mode = str(b.get("mode") or "").strip().lower()
+    if mode not in ("text", "image", "multiview"):
+        bad(f"mode must be text, image or multiview (got {b.get('mode')!r})")
+    req = {"mode": mode, "prompt": str(b.get("prompt") or "").strip(), "image": b.get("image"),
+           "texture": to_bool(b.get("texture")), "polycount": to_int(b.get("polycount"), "polycount", 40000),
+           "steps": to_int(b.get("steps"), "steps", 30), "seed": to_int(b.get("seed"), "seed", None)}
+    if mode == "text" and not req["prompt"]:
+        bad("Type a prompt first")
+    if mode == "image" and not (isinstance(req["image"], str) and req["image"]):
+        bad("No photo was received — pick a photo and try again")
+    if mode == "multiview":
+        imgs = b.get("images") if isinstance(b.get("images"), dict) else {}
+        imgs = {k: v for k, v in imgs.items() if k in MV_VIEWS and isinstance(v, str) and v}
         if "front" not in imgs:
-            raise HTTPException(400, "multiview needs at least a front photo")
-        body.images = imgs
-    if body.mode == "text" and not (body.prompt or "").strip():
-        raise HTTPException(400, "prompt required")
-    if body.mode == "image" and not body.image:
-        raise HTTPException(400, "image required")
+            bad("Multi-view needs at least a front photo")
+        req["images"] = imgs
     tid = uuid.uuid4().hex[:12]
-    tasks[tid] = {"status": "queued", "progress": 0, "stage": "Waiting in queue", "created": time.time(),
-                  "req": body.model_dump()}
+    tasks[tid] = {"status": "queued", "progress": 0, "stage": "Waiting in queue", "created": time.time(), "req": req}
     jobs.put(tid)
     return {"task_id": tid}
 
