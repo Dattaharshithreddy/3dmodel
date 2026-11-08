@@ -39,7 +39,7 @@ jobs:
         working-directory: app/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -PversionCode=${{ github.run_number }} -PversionName=1.0.${{ github.run_number }}
+          ./gradlew assembleDebug --no-daemon -PappVersionCode=${{ github.run_number }} -PappVersionName=1.0.${{ github.run_number }}
           cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/ModelForge-v1.0.${{ github.run_number }}.apk"
 
       - uses: actions/upload-artifact@v4

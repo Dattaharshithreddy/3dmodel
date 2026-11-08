@@ -7,8 +7,8 @@ android {
         applicationId "com.dattaharshithreddy.modelforge"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode (project.findProperty("versionCode") ?: "1").toInteger()
-        versionName (project.findProperty("versionName") ?: "1.0")
+        versionCode((project.findProperty("appVersionCode") ?: "1").toInteger())
+        versionName((project.findProperty("appVersionName") ?: "1.0").toString())
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
