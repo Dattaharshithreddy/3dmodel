@@ -7,7 +7,8 @@ Runs Tencent's open-source Hunyuan3D-2 models on your GPU:
 
 API (used by the Model Forge app):
   GET  /health                   -> {"ok": true, "texture": bool, ...}
-  POST /generate                 {mode: "text"|"image", prompt?, image? (data URL), texture?, polycount?}
+  POST /generate                 {mode: "text"|"image"|"multiview", prompt?, image? (data URL),
+                                  images? ({front, left?, back?, right?} data URLs), texture?, polycount?}
                                  -> {"task_id": "..."}
   GET  /status/{task_id}         -> {status: queued|running|succeeded|failed, progress, stage, model_url?, error?}
   GET  /models/{task_id}.glb     -> the model file
@@ -15,6 +16,8 @@ API (used by the Model Forge app):
 Environment variables:
   SHAPE_MODEL   default "tencent/Hunyuan3D-2mini"   (or "tencent/Hunyuan3D-2" for higher quality, more VRAM)
   SHAPE_SUBFOLDER default "hunyuan3d-dit-v2-mini" (use "hunyuan3d-dit-v2-0" with tencent/Hunyuan3D-2)
+  MV_MODEL      default "tencent/Hunyuan3D-2mv"   multi-view model (front/left/back/right photos)
+  MV_SUBFOLDER  default "hunyuan3d-dit-v2-mv"     ("hunyuan3d-dit-v2-mv-turbo" = faster, slightly less detail)
   TEXTURE       "1" to enable texture painting (default: on if the texture module is installed)
   LOW_VRAM      "1" to offload models to CPU between steps (slower, fits 12-16 GB GPUs)
   API_TOKEN     if set, clients must send "Authorization: Bearer <token>"
@@ -34,6 +37,9 @@ OUT.mkdir(parents=True, exist_ok=True)
 SHAPE_MODEL = os.environ.get("SHAPE_MODEL", "tencent/Hunyuan3D-2mini")
 SHAPE_SUBFOLDER = os.environ.get("SHAPE_SUBFOLDER", "hunyuan3d-dit-v2-mini")
 TEXTURE_MODEL = os.environ.get("TEXTURE_MODEL", "tencent/Hunyuan3D-2")
+MV_MODEL = os.environ.get("MV_MODEL", "tencent/Hunyuan3D-2mv")
+MV_SUBFOLDER = os.environ.get("MV_SUBFOLDER", "hunyuan3d-dit-v2-mv")
+MV_VIEWS = ("front", "left", "back", "right")
 T2I_MODEL = os.environ.get("T2I_MODEL", "Tencent-Hunyuan/HunyuanDiT-v1.1-Diffusers-Distilled")
 LOW_VRAM = os.environ.get("LOW_VRAM", "0") == "1"
 API_TOKEN = os.environ.get("API_TOKEN", "")
@@ -43,7 +49,7 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 class Engine:
     def __init__(self):
         self.lock = threading.Lock()
-        self._shape = self._paint = self._t2i = self._rembg = None
+        self._shape = self._mv = self._paint = self._t2i = self._rembg = None
         try:
             import hy3dgen.texgen  # noqa: F401
             default_tex = "1"
@@ -51,8 +57,27 @@ class Engine:
             default_tex = "0"
         self.texture_available = os.environ.get("TEXTURE", default_tex) == "1"
 
+    def _free(self, attr):
+        if LOW_VRAM and getattr(self, attr) is not None:
+            setattr(self, attr, None)
+            import gc, torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    def multiview(self):
+        if self._mv is None:
+            self._free("_shape")  # on small GPUs keep only one shape model in memory
+            from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+            self._mv = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+                MV_MODEL, subfolder=MV_SUBFOLDER, use_safetensors=True)
+            if LOW_VRAM and hasattr(self._mv, "enable_model_cpu_offload"):
+                self._mv.enable_model_cpu_offload()
+        return self._mv
+
     def shape(self):
         if self._shape is None:
+            self._free("_mv")
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
             self._shape = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
                 SHAPE_MODEL, subfolder=SHAPE_SUBFOLDER, use_safetensors=True)
@@ -95,7 +120,17 @@ def run(task_id: str):
     t = tasks[task_id]
     req = t["req"]
     try:
-        # 1. input image
+        def decode(data_url):
+            return Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[-1])))
+
+        def cutout(img):
+            img = img.convert("RGBA")
+            return engine.rembg()(img) if img.getextrema()[3][0] == 255 else img  # skip if already transparent
+
+        gen = torch.manual_seed(int(req.get("seed") or 1234))
+        steps = int(req.get("steps") or 30)
+
+        # 1. input image(s)
         if req["mode"] == "text":
             set_stage(t, "Imagining the object (text → image)", 5)
             prompt = req["prompt"].strip() + ", single object, centered, white background, 3D render, full view"
@@ -103,20 +138,26 @@ def run(task_id: str):
             if LOW_VRAM:
                 engine._t2i = None
                 torch.cuda.empty_cache()
+        elif req["mode"] == "multiview":
+            views = {k: decode(v) for k, v in (req.get("images") or {}).items() if k in MV_VIEWS and v}
+            image = views["front"]
         else:
-            raw = req["image"].split(",", 1)[-1]
-            image = Image.open(io.BytesIO(base64.b64decode(raw)))
+            image = decode(req["image"])
         image.save(OUT / f"{task_id}_input.png")
 
         set_stage(t, "Removing background", 15)
-        image = image.convert("RGBA")
-        if image.getextrema()[3][0] == 255:  # no transparency yet
-            image = engine.rembg()(image)
-
-        # 2. geometry
-        set_stage(t, "Sculpting 3D shape", 25)
-        mesh = engine.shape()(image=image, num_inference_steps=int(req.get("steps") or 30),
-                              octree_resolution=380, generator=torch.manual_seed(int(req.get("seed") or 1234)))[0]
+        if req["mode"] == "multiview":
+            views = {k: cutout(v) for k, v in views.items()}
+            image = views["front"]
+            # 2. geometry from all views
+            set_stage(t, f"Sculpting 3D shape from {len(views)} photos", 25)
+            mesh = engine.multiview()(image=views, num_inference_steps=steps, octree_resolution=380,
+                                      num_chunks=20000, generator=gen, output_type="trimesh")[0]
+        else:
+            image = cutout(image)
+            # 2. geometry
+            set_stage(t, "Sculpting 3D shape", 25)
+            mesh = engine.shape()(image=image, num_inference_steps=steps, octree_resolution=380, generator=gen)[0]
 
         set_stage(t, "Cleaning mesh", 55)
         from hy3dgen.shapegen import FloaterRemover, DegenerateFaceRemover, FaceReducer
@@ -169,6 +210,7 @@ class GenerateReq(BaseModel):
     mode: str
     prompt: str | None = None
     image: str | None = None
+    images: dict[str, str] | None = None
     texture: bool = True
     polycount: int | None = 40000
     steps: int | None = 30
@@ -179,14 +221,19 @@ class GenerateReq(BaseModel):
 def health():
     import torch
     return {"ok": True, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "queue": jobs.qsize(),
+            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "multiview": True, "mv_model": MV_MODEL, "queue": jobs.qsize(),
             "auth": bool(API_TOKEN)}
 
 
 @app.post("/generate")
 def generate(body: GenerateReq):
-    if body.mode not in ("text", "image"):
-        raise HTTPException(400, "mode must be text or image")
+    if body.mode not in ("text", "image", "multiview"):
+        raise HTTPException(400, "mode must be text, image or multiview")
+    if body.mode == "multiview":
+        imgs = {k: v for k, v in (body.images or {}).items() if k in MV_VIEWS and v}
+        if "front" not in imgs:
+            raise HTTPException(400, "multiview needs at least a front photo")
+        body.images = imgs
     if body.mode == "text" and not (body.prompt or "").strip():
         raise HTTPException(400, "prompt required")
     if body.mode == "image" and not body.image:

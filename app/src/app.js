@@ -11,7 +11,7 @@ import { ReelStudio } from './reels.js';
 const $ = s => document.querySelector(s);
 const Cap = window.Capacitor;
 const NATIVE = !!Cap?.isNativePlatform?.();
-const state = { mode: 'text', image: null, current: null, model: null, polling: null };
+const state = { mode: 'text', image: null, multi: false, views: {}, current: null, model: null, polling: null };
 
 // =============================================================== settings
 const SKEY = 'model-forge-settings';
@@ -56,7 +56,7 @@ const ENGINES = {
     async create(req) {
       if (req.mode === 'refine') throw new Error('Your server textures models directly — tick "Generate textures" and generate again.');
       const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(),
-        json: { mode: req.mode, prompt: req.prompt, image: req.image, texture: req.texture, polycount: req.polycount } });
+        json: { mode: req.mode, prompt: req.prompt, image: req.image, images: req.images, texture: req.texture, polycount: req.polycount } });
       return d.task_id;
     },
     async status(id) {
@@ -72,6 +72,12 @@ const ENGINES = {
     h: () => ({ Authorization: `Bearer ${settings.meshy}` }),
     async create(req) {
       const B = 'https://api.meshy.ai/openapi';
+      if (req.mode === 'multiview') {
+        const urls = ['front', 'left', 'back', 'right'].map(k => req.images[k]).filter(Boolean);
+        const d = await http(`${B}/v1/multi-image-to-3d`, { method: 'POST', headers: this.h(),
+          json: { image_urls: urls, should_texture: req.texture, enable_pbr: req.texture, should_remesh: true, target_polycount: req.polycount } });
+        return `multi:${d.result}`;
+      }
       if (req.mode === 'image') {
         const d = await http(`${B}/v1/image-to-3d`, { method: 'POST', headers: this.h(),
           json: { image_url: req.image, should_texture: req.texture, enable_pbr: req.texture, should_remesh: true, target_polycount: req.polycount } });
@@ -85,7 +91,8 @@ const ENGINES = {
     },
     async status(id) {
       const [kind, raw] = id.split(':');
-      const d = await http(kind === 'text' ? `https://api.meshy.ai/openapi/v2/text-to-3d/${raw}` : `https://api.meshy.ai/openapi/v1/image-to-3d/${raw}`, { headers: this.h() });
+      const path = { text: 'v2/text-to-3d', image: 'v1/image-to-3d', multi: 'v1/multi-image-to-3d' }[kind];
+      const d = await http(`https://api.meshy.ai/openapi/${path}/${raw}`, { headers: this.h() });
       const map = { PENDING: 'queued', IN_PROGRESS: 'running', SUCCEEDED: 'succeeded' };
       return { status: map[d.status] || 'failed', progress: d.progress || 0, modelUrl: d.model_urls?.glb, thumbnail: d.thumbnail_url,
         error: d.task_error?.message || (map[d.status] ? undefined : d.status), canRefine: kind === 'text' && d.mode === 'preview' };
@@ -96,7 +103,7 @@ const ENGINES = {
     ready: () => !!settings.tripo,
     h: () => ({ Authorization: `Bearer ${settings.tripo}` }),
     async create(req) {
-      if (req.mode === 'image') throw new Error('Tripo engine supports text prompts only in this app.');
+      if (req.mode !== 'text' && req.mode !== 'refine') throw new Error('Tripo engine supports text prompts only in this app.');
       const body = req.mode === 'refine' ? { type: 'refine_model', draft_model_task_id: req.previewTaskId }
         : { type: 'text_to_model', prompt: req.prompt, face_limit: req.polycount, texture: req.texture };
       const d = await http('https://api.tripo3d.ai/v2/openapi/task', { method: 'POST', headers: this.h(), json: body });
@@ -258,21 +265,50 @@ drop.onclick = () => file.click();
 drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
 drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); loadImage(e.dataTransfer.files[0]); };
-file.onchange = () => loadImage(file.files[0]);
-function loadImage(f) {
-  if (!f || !f.type.startsWith('image/')) return showError('Please choose an image.');
-  // Re-encode to PNG at max 1024px: keeps uploads small and handles HEIC/large camera photos.
-  const url = URL.createObjectURL(f), img = new Image();
-  img.onload = () => {
-    const s = Math.min(1, 1024 / Math.max(img.width, img.height)), c = document.createElement('canvas');
-    c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    state.image = c.toDataURL('image/png');
-    $('#preview').src = state.image; $('#preview').hidden = false; $('#drop-hint').hidden = true; URL.revokeObjectURL(url);
-  };
-  img.onerror = () => showError('Could not read that image.');
-  img.src = url;
+file.onchange = () => { loadImage(file.files[0]); file.value = ''; };
+// Re-encode to PNG at max 1024px: keeps uploads small and handles HEIC/large camera photos.
+function readImage(f) {
+  return new Promise((resolve, reject) => {
+    if (!f || !f.type.startsWith('image/')) return reject(new Error('Please choose an image.'));
+    const url = URL.createObjectURL(f), img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, 1024 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); resolve(c.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('Could not read that image.'));
+    img.src = url;
+  });
 }
+async function loadImage(f) {
+  try { state.image = await readImage(f); $('#preview').src = state.image; $('#preview').hidden = false; $('#drop-hint').hidden = true; }
+  catch (e) { showError(e.message); }
+}
+// multi-view slots
+document.querySelectorAll('.vtab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.vtab').forEach(x => x.classList.toggle('active', x === b));
+  state.multi = b.dataset.views === 'multi';
+  $('#single-photo').hidden = state.multi; $('#multi-photo').hidden = !state.multi;
+});
+let pickingView = null;
+const viewFile = $('#view-file');
+function renderViews() {
+  document.querySelectorAll('.view').forEach(v => {
+    const src = state.views[v.dataset.view], img = v.querySelector('img');
+    v.classList.toggle('has', !!src); img.hidden = !src; v.querySelector('.clear').hidden = !src;
+    if (src) img.src = src;
+  });
+}
+document.querySelectorAll('.view').forEach(v => {
+  v.onclick = () => { pickingView = v.dataset.view; viewFile.click(); };
+  v.querySelector('.clear').onclick = e => { e.stopPropagation(); delete state.views[v.dataset.view]; renderViews(); };
+});
+viewFile.onchange = async () => {
+  try { if (pickingView) state.views[pickingView] = await readImage(viewFile.files[0]); renderViews(); }
+  catch (e) { showError(e.message); }
+  viewFile.value = '';
+};
 
 // =============================================================== generation
 const showError = msg => { $('#error').textContent = msg || ''; $('#error').hidden = !msg; };
@@ -282,7 +318,7 @@ async function startJob(req, label) {
   try {
     const id = await ENGINES[req.provider].create(req);
     const job = { id, provider: req.provider, prompt: label, mode: req.mode, created: Date.now(), status: 'queued',
-      thumb: req.mode === 'image' ? await tinyThumb(req.image) : null };
+      thumb: req.mode === 'image' ? await tinyThumb(req.image) : req.mode === 'multiview' ? await tinyThumb(req.images.front) : null };
     saveHistory(job); poll(job);
   } catch (e) { showError(e.message); $('#generate').disabled = false; }
 }
@@ -295,6 +331,11 @@ $('#generate').onclick = () => {
     if (!prompt) return showError('Type a prompt first.');
     const art = $('#art').value, game = /mobile|pc/.test($('#usage').value) ? 'game asset' : '';
     startJob({ ...base, mode: 'text', prompt: [prompt, art, game].filter(Boolean).join(', ') }, prompt);
+  } else if (state.multi) {
+    const n = Object.keys(state.views).length;
+    if (!state.views.front) return showError('Add a front photo first.');
+    if (n < 2) return showError('Add at least one more view (back is the most useful), or switch to "1 photo".');
+    startJob({ ...base, mode: 'multiview', images: { ...state.views } }, `Multi-view → 3D (${n} photos)`);
   } else {
     if (!state.image) return showError('Pick a photo first.');
     startJob({ ...base, mode: 'image', image: state.image }, 'Photo → 3D');
@@ -387,7 +428,7 @@ $('#s-test').onclick = async () => {
   out.textContent = 'Connecting…'; out.className = 'small';
   try {
     const d = await http(`${url}/health`);
-    out.textContent = `✓ Connected — GPU: ${d.gpu || 'none'}, textures: ${d.texture ? 'on' : 'off'}`; out.className = 'small ok';
+    out.textContent = `✓ Connected — GPU: ${d.gpu || 'none'}, textures: ${d.texture ? 'on' : 'off'}, multi-view: ${d.multiview ? 'yes' : 'no (update server)'}`; out.className = 'small ok';
   } catch (e) { out.textContent = '✗ ' + e.message; out.className = 'small error'; }
 };
 

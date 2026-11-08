@@ -39,6 +39,17 @@ In the app, tap **⚙ Settings**, paste the server URL, tap **Test connection**,
 
 Optional: you can also paste a paid **Meshy** or **Tripo** API key in Settings to use their cloud engines. **Demo** mode makes simple offline shapes so you can try the app without a server.
 
+## 📸 Multi-view: most accurate models
+In **Image to 3D**, switch to **Multi-view** and add photos of the **front** (required) plus the **left, back and right** sides. The server uses **Hunyuan3D-2mv**, which builds the shape from all the photos together, so the sides you can see aren't guessed. This gives the most accurate shapes, which is best for game props and characters based on real objects.
+
+How to shoot:
+- Turn the object 90° between shots, or walk around it. Keep the same distance and camera height.
+- Keep the whole object in frame, on a plain background, in the same lighting each time.
+- Front + back already helps a lot; all 4 is best.
+- Textures are painted from the front photo.
+
+On Colab's free T4, the server keeps only one shape model in memory at a time (`LOW_VRAM=1`). The first switch between single-photo and multi-view mode takes about 1–2 minutes while the other model loads.
+
 ## 🎮 Making game assets
 - **Made for:** pick *Mobile game* (~8k triangles) or *PC / console* (~30k). This sets the polygon budget and asks the AI for a game-asset look.
 - **Art style:** Realistic, Stylized, Low-poly, Cartoon, Chibi, or Sci-fi.
@@ -64,6 +75,7 @@ Tap **Record**, and the video is saved or shared straight from your phone (MP4 w
 | Variable | Default | Meaning |
 |---|---|---|
 | `SHAPE_MODEL` / `SHAPE_SUBFOLDER` | `tencent/Hunyuan3D-2mini` / `hunyuan3d-dit-v2-mini` | Use `tencent/Hunyuan3D-2` / `hunyuan3d-dit-v2-0` for higher quality (needs more VRAM) |
+| `MV_MODEL` / `MV_SUBFOLDER` | `tencent/Hunyuan3D-2mv` / `hunyuan3d-dit-v2-mv` | Multi-view model. `hunyuan3d-dit-v2-mv-turbo` is faster |
 | `TEXTURE` | on if installed | `0` = shape only |
 | `LOW_VRAM` | `0` | `1` = move models to the CPU between steps (needed on 16 GB GPUs) |
 | `API_TOKEN` | – | Require this token (enter the same one in the app's Settings) |

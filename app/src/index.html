@@ -60,11 +60,26 @@
     </section>
 
     <section id="image-input" hidden>
-      <label>Photo of one object</label>
-      <div id="drop" class="drop" tabindex="0">
-        <img id="preview" alt="" hidden />
-        <span id="drop-hint">Tap to pick a photo<br><span class="muted">Single object, plain background works best</span></span>
-        <input id="file" type="file" accept="image/*" hidden />
+      <div class="tabs small-tabs">
+        <button type="button" class="vtab active" data-views="single">1 photo</button>
+        <button type="button" class="vtab" data-views="multi">Multi-view (more accurate)</button>
+      </div>
+      <div id="single-photo">
+        <div id="drop" class="drop" tabindex="0">
+          <img id="preview" alt="" hidden />
+          <span id="drop-hint">Tap to pick a photo<br><span class="muted">Single object, plain background works best</span></span>
+          <input id="file" type="file" accept="image/*" hidden />
+        </div>
+      </div>
+      <div id="multi-photo" hidden>
+        <div class="views">
+          <div class="view" data-view="front" data-label="Front"><img alt="" hidden /><span>Front<br><b>required</b></span><button type="button" class="clear" hidden>✕</button></div>
+          <div class="view" data-view="left" data-label="Left"><img alt="" hidden /><span>Left side</span><button type="button" class="clear" hidden>✕</button></div>
+          <div class="view" data-view="back" data-label="Back"><img alt="" hidden /><span>Back</span><button type="button" class="clear" hidden>✕</button></div>
+          <div class="view" data-view="right" data-label="Right"><img alt="" hidden /><span>Right side</span><button type="button" class="clear" hidden>✕</button></div>
+        </div>
+        <input id="view-file" type="file" accept="image/*" hidden />
+        <p class="muted small">📸 Walk around the object, or turn it 90° each time. Keep the same distance and height, the whole object in frame, and the same lighting. Front + back already helps a lot; all 4 is best.</p>
       </div>
     </section>
 
