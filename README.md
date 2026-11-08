@@ -39,6 +39,22 @@ In the app, tap **⚙ Settings**, paste the server URL, tap **Test connection**,
 
 Optional: you can also paste a paid **Meshy** or **Tripo** API key in Settings to use their cloud engines. **Demo** mode makes simple offline shapes so you can try the app without a server.
 
+## 🎮 Making game assets
+- **Made for:** pick *Mobile game* (~8k triangles) or *PC / console* (~30k). This sets the polygon budget and asks the AI for a game-asset look.
+- **Art style:** Realistic, Stylized, Low-poly, Cartoon, Chibi, or Sci-fi.
+- **Export for games:** set the **height in meters** (e.g. 1.8 for a human, 0.5 for a chest) and your engine's up-axis. The model's pivot is placed at its feet, so it stands on the ground when you drop it in.
+- **GLB** imports directly into **Godot** and **Blender**, into **Unity** with the free *glTFast* package, and into **Unreal** (5.x has glTF import built in). For **Roblox**, export OBJ and use the 3D Importer.
+- **Characters that need to move:** for prompts like "full body, T-pose", import the GLB into Blender, export it as FBX, and upload it to the free **Mixamo** site for automatic rigging and animations.
+
+## 🎬 Making reels
+Open a model and tap **🎬 Make a reel from this model**. Then choose:
+- **Format:** 9:16 Reel / Short / TikTok, 1:1 post, or 16:9 YouTube (all 1080p)
+- **Look:** 3D realistic, 2D toon (cartoon with outlines), 2D pixel art, 2D sketch, or hologram
+- **Camera move:** 360° turntable, orbit + zoom, dramatic reveal, floating, or drop & bounce
+- **Background, length (5–15 s), title and subtitle**
+
+Tap **Record**, and the video is saved or shared straight from your phone (MP4 where the phone supports it, otherwise WebM). Add music in Instagram, YouTube or CapCut. The *Green screen* background lets you put the model into other videos.
+
 ## Tips for good results
 - **Photos:** one object, centered, plain background, good lighting.
 - **Prompts:** describe one object, e.g. "a wooden treasure chest with gold trim, stylized".

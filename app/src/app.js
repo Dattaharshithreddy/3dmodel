@@ -6,6 +6,7 @@ import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { ReelStudio } from './reels.js';
 
 const $ = s => document.querySelector(s);
 const Cap = window.Capacitor;
@@ -189,13 +190,26 @@ async function saveFile(data, name, mime) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: mime })); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+// Game-ready copy: real-world height in meters, pivot at the feet (bottom-center), chosen up-axis.
+function exportable() {
+  const root = new THREE.Group(), inner = new THREE.Group(), copy = state.model.clone(true);
+  copy.position.set(0, 0, 0); copy.rotation.set(0, 0, 0); copy.scale.copy(state.model.scale);
+  inner.add(copy); root.add(inner); root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(copy), size = box.getSize(new THREE.Vector3());
+  copy.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
+  const h = Math.max(0.01, Number($('#height').value) || 1);
+  inner.scale.setScalar(h / (size.y || 1));
+  if ($('#upaxis').value === 'z') root.rotation.x = Math.PI / 2;
+  root.name = slug(state.current?.prompt); root.updateMatrixWorld(true);
+  return root;
+}
 document.querySelectorAll('[data-export]').forEach(b => b.onclick = async () => {
   if (!state.model) return showError('Nothing to export yet.');
-  const fmt = b.dataset.export, name = slug(state.current?.prompt);
+  const fmt = b.dataset.export, name = slug(state.current?.prompt), obj = exportable();
   try {
-    if (fmt === 'glb') await saveFile(await new GLTFExporter().parseAsync(state.model, { binary: true }), `${name}.glb`, 'model/gltf-binary');
-    else if (fmt === 'obj') await saveFile(new OBJExporter().parse(state.model), `${name}.obj`, 'text/plain');
-    else await saveFile(new STLExporter().parse(state.model, { binary: true }).buffer, `${name}.stl`, 'model/stl');
+    if (fmt === 'glb') await saveFile(await new GLTFExporter().parseAsync(obj, { binary: true }), `${name}.glb`, 'model/gltf-binary');
+    else if (fmt === 'obj') await saveFile(new OBJExporter().parse(obj), `${name}.obj`, 'text/plain');
+    else await saveFile(new STLExporter().parse(obj, { binary: true }).buffer, `${name}.stl`, 'model/stl');
   } catch (e) { if (!/cancel/i.test(e.message)) showError('Export failed: ' + e.message); }
 });
 
@@ -235,7 +249,10 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   $('#text-input').hidden = state.mode !== 'text';
   $('#image-input').hidden = state.mode !== 'image';
 });
-$('#poly').oninput = e => $('#poly-val').textContent = Number(e.target.value).toLocaleString();
+const setPoly = n => { $('#poly').value = n; $('#poly-val').textContent = Number(n).toLocaleString(); };
+$('#poly').oninput = e => { setPoly(e.target.value); $('#usage').value = 'custom'; };
+const USAGE = { mobile: { poly: 8000, tex: true }, pc: { poly: 30000, tex: true }, hero: { poly: 80000, tex: true }, print: { poly: 150000, tex: false } };
+$('#usage').onchange = e => { const u = USAGE[e.target.value]; if (u) { setPoly(u.poly); $('#texture').checked = u.tex; } };
 const drop = $('#drop'), file = $('#file');
 drop.onclick = () => file.click();
 drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
@@ -276,7 +293,8 @@ $('#generate').onclick = () => {
   if (state.mode === 'text') {
     const prompt = $('#prompt').value.trim();
     if (!prompt) return showError('Type a prompt first.');
-    startJob({ ...base, mode: 'text', prompt }, prompt);
+    const art = $('#art').value, game = /mobile|pc/.test($('#usage').value) ? 'game asset' : '';
+    startJob({ ...base, mode: 'text', prompt: [prompt, art, game].filter(Boolean).join(', ') }, prompt);
   } else {
     if (!state.image) return showError('Pick a photo first.');
     startJob({ ...base, mode: 'image', image: state.image }, 'Photo → 3D');
@@ -371,6 +389,45 @@ $('#s-test').onclick = async () => {
     const d = await http(`${url}/health`);
     out.textContent = `✓ Connected — GPU: ${d.gpu || 'none'}, textures: ${d.texture ? 'on' : 'off'}`; out.className = 'small ok';
   } catch (e) { out.textContent = '✗ ' + e.message; out.className = 'small error'; }
+};
+
+// =============================================================== reel studio
+const reelDlg = $('#reel');
+let studio, previewRaf = null, recording = false;
+const reelOpts = () => ({ format: $('#r-format').value, look: $('#r-look').value, motion: $('#r-motion').value, bg: $('#r-bg').value,
+  duration: Number($('#r-dur').value), title: $('#r-title').value.trim(), subtitle: $('#r-sub').value.trim() });
+function reelPreview() {
+  cancelAnimationFrame(previewRaf);
+  studio.setup(state.model, reelOpts());
+  const t0 = performance.now();
+  const loop = () => {
+    if (!reelDlg.open || recording) return;
+    const el = (performance.now() - t0) / 1000, d = studio.opts.duration;
+    studio.frame((el % d) / d, el); previewRaf = requestAnimationFrame(loop);
+  };
+  loop();
+}
+$('#open-reel').onclick = () => {
+  if (!state.model) return showError('Generate or open a model first, then make a reel.');
+  studio ||= new ReelStudio($('#reel-canvas'));
+  if (!$('#r-title').value && state.current?.prompt) $('#r-title').value = state.current.prompt.slice(0, 40);
+  $('#r-job').hidden = true; reelDlg.showModal(); reelPreview();
+};
+reelDlg.querySelectorAll('select, input').forEach(el => el.addEventListener('change', () => !recording && reelPreview()));
+reelDlg.addEventListener('cancel', e => { if (recording) e.preventDefault(); });
+$('#r-record').onclick = async () => {
+  if (recording) return;
+  recording = true; cancelAnimationFrame(previewRaf);
+  $('#r-record').disabled = $('#r-close').disabled = true; $('#r-job').hidden = false; $('#r-status').textContent = 'Recording…';
+  try {
+    studio.setup(state.model, reelOpts());
+    const blob = await studio.record(t => { $('#r-pct').textContent = `${Math.round(t * 100)}%`; $('#r-bar').style.width = `${t * 100}%`; });
+    $('#r-status').textContent = 'Saving…';
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    await saveFile(await blob.arrayBuffer(), `${slug(studio.opts.title || state.current?.prompt)}-reel.${ext}`, blob.type);
+    $('#r-status').textContent = ext === 'mp4' ? 'Saved ✓' : 'Saved ✓ (WebM — CapCut/Instagram accept it; convert to MP4 if an app refuses)';
+  } catch (e) { if (!/cancel/i.test(e.message)) $('#r-status').textContent = 'Failed: ' + e.message; }
+  recording = false; $('#r-record').disabled = $('#r-close').disabled = false; reelPreview();
 };
 
 renderEngines(); renderHistory();

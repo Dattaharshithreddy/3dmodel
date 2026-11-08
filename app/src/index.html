@@ -47,7 +47,16 @@
 
     <section id="text-input">
       <label for="prompt">Prompt</label>
-      <textarea id="prompt" rows="3" placeholder="A cute cartoon fox wearing a red scarf"></textarea>
+      <textarea id="prompt" rows="3" placeholder="A knight with a glowing sword, full body, T-pose"></textarea>
+      <label for="art">Art style</label>
+      <select id="art">
+        <option value="">Realistic</option>
+        <option value="stylized hand-painted game art">Stylized (game art)</option>
+        <option value="low poly, flat colors">Low-poly</option>
+        <option value="cartoon, bold colors, smooth shapes">Cartoon</option>
+        <option value="chibi, cute, big head, small body">Chibi</option>
+        <option value="sci-fi, hard surface, metallic panels">Sci-fi hard surface</option>
+      </select>
     </section>
 
     <section id="image-input" hidden>
@@ -59,13 +68,22 @@
       </div>
     </section>
 
+    <label for="usage">Made for</label>
+    <select id="usage">
+      <option value="mobile">🎮 Mobile game (light, ~8k triangles)</option>
+      <option value="pc" selected>🎮 PC / console game (~30k)</option>
+      <option value="hero">🎬 Hero asset / reels (~80k)</option>
+      <option value="print">🖨️ 3D printing (detailed, no color)</option>
+      <option value="custom">Custom</option>
+    </select>
+
     <label for="provider">Engine</label>
     <select id="provider"></select>
 
     <label class="check"><input type="checkbox" id="texture" checked /> Generate textures (color)</label>
 
-    <label for="poly">Max triangles <span class="muted" id="poly-val">40,000</span></label>
-    <input id="poly" type="range" min="5000" max="150000" step="5000" value="40000" />
+    <label for="poly">Max triangles <span class="muted" id="poly-val">30,000</span></label>
+    <input id="poly" type="range" min="2000" max="150000" step="1000" value="30000" />
 
     <button id="generate" class="primary">Generate</button>
 
@@ -75,6 +93,17 @@
     </div>
     <p id="error" class="error" hidden></p>
     <button id="refine" class="secondary" hidden>✦ Add textures to this draft</button>
+
+    <h2>Export for games</h2>
+    <div class="row2">
+      <label for="height">Height in game (meters)<input id="height" type="number" min="0.01" step="0.1" value="1.8" /></label>
+      <label for="upaxis">Engine<select id="upaxis">
+        <option value="y">Unity / Godot / Roblox (Y-up)</option>
+        <option value="z">Unreal / Blender (Z-up)</option>
+      </select></label>
+    </div>
+    <p class="muted small">Pivot is placed at the model's feet (bottom-center). GLB imports directly into Unity (glTFast), Unreal, Godot and Blender.</p>
+    <button id="open-reel" class="secondary">🎬 Make a reel from this model</button>
 
     <h2>My models</h2>
     <ul id="history" class="history"></ul>
@@ -100,6 +129,54 @@
       <div class="row-end">
         <button value="cancel" class="secondary">Cancel</button>
         <button id="s-save" value="save" class="primary small-btn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="reel">
+    <form method="dialog" class="reel-form">
+      <h2>🎬 Reel studio</h2>
+      <div class="reel-layout">
+        <div class="reel-preview"><canvas id="reel-canvas"></canvas></div>
+        <div class="reel-controls">
+          <label>Format<select id="r-format">
+            <option value="1080x1920">Reel / Short / TikTok (9:16)</option>
+            <option value="1080x1080">Square post (1:1)</option>
+            <option value="1920x1080">YouTube (16:9)</option>
+          </select></label>
+          <label>Look<select id="r-look">
+            <option value="real">3D realistic</option>
+            <option value="toon">2D toon (cartoon, outlines)</option>
+            <option value="pixel">2D pixel art</option>
+            <option value="sketch">2D sketch (ink on paper)</option>
+            <option value="holo">Hologram</option>
+          </select></label>
+          <label>Camera move<select id="r-motion">
+            <option value="turntable">360° turntable</option>
+            <option value="orbit">Orbit + zoom in</option>
+            <option value="reveal">Dramatic reveal</option>
+            <option value="float">Floating showcase</option>
+            <option value="drop">Drop &amp; bounce</option>
+          </select></label>
+          <label>Background<select id="r-bg">
+            <option value="studio">Dark studio</option>
+            <option value="sunset">Sunset gradient</option>
+            <option value="neon">Neon purple</option>
+            <option value="ocean">Ocean blue</option>
+            <option value="white">Clean white</option>
+            <option value="green">Green screen</option>
+          </select></label>
+          <label>Length<select id="r-dur">
+            <option value="5">5 s</option><option value="8" selected>8 s</option><option value="12">12 s</option><option value="15">15 s</option>
+          </select></label>
+          <label>Title<input id="r-title" maxlength="40" placeholder="My new character" /></label>
+          <label>Subtitle<input id="r-sub" maxlength="60" placeholder="Made with Model Forge" /></label>
+        </div>
+      </div>
+      <div class="job" id="r-job" hidden><div class="job-row"><span id="r-status">Recording…</span><span id="r-pct">0%</span></div><div class="bar"><div id="r-bar"></div></div></div>
+      <div class="row-end">
+        <button value="cancel" class="secondary" id="r-close">Close</button>
+        <button type="button" id="r-record" class="primary small-btn">● Record video</button>
       </div>
     </form>
   </dialog>
