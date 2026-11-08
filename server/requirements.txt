@@ -1,0 +1,5 @@
+# API server deps. Hunyuan3D-2 itself is installed separately (see setup.sh).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pillow
+trimesh

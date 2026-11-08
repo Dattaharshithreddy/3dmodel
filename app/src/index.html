@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d0f14" />
+  <title>Model Forge</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": {
+      "three": "./vendor/three/build/three.module.js",
+      "three/addons/": "./vendor/three/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <main class="stage">
+    <div id="viewport"></div>
+    <div id="empty" class="empty">
+      <div class="empty-icon">◇</div>
+      <p>Describe something or pick a photo,<br>then tap <b>Generate</b>.</p>
+    </div>
+    <div class="toolbar">
+      <button data-act="rotate" class="toggle" title="Auto-rotate">⟳</button>
+      <button data-act="wire" class="toggle" title="Wireframe">▦</button>
+      <button data-act="grid" class="toggle on" title="Grid">⊞</button>
+      <button data-act="reset" title="Re-center">⌖</button>
+      <span class="sep"></span>
+      <button data-export="glb">GLB</button>
+      <button data-export="obj">OBJ</button>
+      <button data-export="stl">STL</button>
+    </div>
+    <div id="stats" class="stats"></div>
+  </main>
+
+  <aside class="panel">
+    <header class="brand">
+      <div class="logo">◆</div>
+      <div class="grow"><h1>Model Forge</h1><p>Text &amp; image to 3D</p></div>
+      <button id="open-settings" class="icon-btn" title="Settings">⚙</button>
+    </header>
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-mode="text">Text to 3D</button>
+      <button class="tab" data-mode="image">Image to 3D</button>
+    </div>
+
+    <section id="text-input">
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" rows="3" placeholder="A cute cartoon fox wearing a red scarf"></textarea>
+    </section>
+
+    <section id="image-input" hidden>
+      <label>Photo of one object</label>
+      <div id="drop" class="drop" tabindex="0">
+        <img id="preview" alt="" hidden />
+        <span id="drop-hint">Tap to pick a photo<br><span class="muted">Single object, plain background works best</span></span>
+        <input id="file" type="file" accept="image/*" hidden />
+      </div>
+    </section>
+
+    <label for="provider">Engine</label>
+    <select id="provider"></select>
+
+    <label class="check"><input type="checkbox" id="texture" checked /> Generate textures (color)</label>
+
+    <label for="poly">Max triangles <span class="muted" id="poly-val">40,000</span></label>
+    <input id="poly" type="range" min="5000" max="150000" step="5000" value="40000" />
+
+    <button id="generate" class="primary">Generate</button>
+
+    <div id="job" class="job" hidden>
+      <div class="job-row"><span id="job-status">Queued</span><span id="job-pct">0%</span></div>
+      <div class="bar"><div id="job-bar"></div></div>
+    </div>
+    <p id="error" class="error" hidden></p>
+    <button id="refine" class="secondary" hidden>✦ Add textures to this draft</button>
+
+    <h2>My models</h2>
+    <ul id="history" class="history"></ul>
+  </aside>
+
+  <dialog id="settings">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <p class="muted small">Your own AI server runs open-source Hunyuan3D-2 on a GPU (your PC or free Google Colab). See the README in the GitHub repo.</p>
+      <label for="s-server">My AI server URL</label>
+      <input id="s-server" type="url" placeholder="https://xxxx.trycloudflare.com" autocomplete="off" />
+      <label for="s-token">Server token <span class="muted">(optional)</span></label>
+      <input id="s-token" type="password" autocomplete="off" />
+      <button type="button" id="s-test" class="secondary">Test connection</button>
+      <p id="s-result" class="small"></p>
+      <details>
+        <summary>Optional: paid cloud engines</summary>
+        <label for="s-meshy">Meshy API key</label>
+        <input id="s-meshy" type="password" placeholder="msy_…" autocomplete="off" />
+        <label for="s-tripo">Tripo API key</label>
+        <input id="s-tripo" type="password" placeholder="tsk_…" autocomplete="off" />
+      </details>
+      <div class="row-end">
+        <button value="cancel" class="secondary">Cancel</button>
+        <button id="s-save" value="save" class="primary small-btn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

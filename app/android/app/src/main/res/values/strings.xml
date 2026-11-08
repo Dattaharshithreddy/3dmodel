@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Model Forge</string>
+    <string name="title_activity_main">Model Forge</string>
+    <string name="package_name">com.dattaharshithreddy.modelforge</string>
+    <string name="custom_url_scheme">com.dattaharshithreddy.modelforge</string>
+</resources>

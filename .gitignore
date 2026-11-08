@@ -1,0 +1,6 @@
+node_modules/
+__pycache__/
+*.pyc
+server/outputs/
+server/Hunyuan3D-2/
+.DS_Store

@@ -1,0 +1,7 @@
+{
+  "appId": "com.dattaharshithreddy.modelforge",
+  "appName": "Model Forge",
+  "webDir": "www",
+  "android": { "allowMixedContent": true },
+  "plugins": { "CapacitorHttp": { "enabled": false } }
+}
