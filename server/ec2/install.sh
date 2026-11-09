@@ -15,6 +15,22 @@ fi
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1 | tr -d ' ')
 
+echo "== Checking memory"
+RAM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
+SWAP_GB=$(awk '/SwapTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
+echo "RAM: ${RAM_GB} GB, swap: ${SWAP_GB} GB"
+if [ "$RAM_GB" -lt 30 ] && [ "$SWAP_GB" -lt 16 ] && [ ! -f /swapfile ]; then
+  # Small-RAM instances (e.g. g4dn.xlarge = 16 GB) offload models from the GPU to RAM; swap prevents crashes.
+  FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
+  if [ "$FREE_GB" -gt 70 ]; then
+    echo "Adding 32 GB swap file…"
+    sudo fallocate -l 32G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+  else
+    echo "⚠️  Only ${FREE_GB} GB disk free — skipping swap. Increase the EBS volume to 100 GB for more stability."
+  fi
+fi
+
 echo "== Choosing Python"
 if [ -x /opt/pytorch/bin/python ]; then PY=/opt/pytorch/bin/python          # Deep Learning AMI (2024+)
 elif [ -x /opt/conda/envs/pytorch/bin/python ]; then PY=/opt/conda/envs/pytorch/bin/python
