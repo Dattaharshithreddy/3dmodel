@@ -79,6 +79,13 @@ const ENGINES = {
     label: 'My AI server (Hunyuan3D-2)',
     ready: () => !!serverBase(),
     async create(req) {
+      if (req.mode === '2d') {
+        const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(), native: false,
+          json: { mode: '2d', prompt: req.prompt, style: req.style, aspect: req.aspect, transparent: req.transparent,
+                  quality: req.quality, seed: req.seed, fresh: !!req.seed } });
+        if (d.reused) toast(d.reused === 'running' ? 'Already being made — reconnected to it.' : 'Same prompt & settings already done — showing it.');
+        return d.task_id;
+      }
       if (req.mode === 'refine') throw new Error('Your server textures models directly — tick "Generate textures" and generate again.');
       const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(), native: false,
         json: { mode: req.mode, prompt: req.prompt, image: req.image, images: req.images, texture: req.texture,
@@ -89,7 +96,7 @@ const ENGINES = {
     async status(id) {
       const d = await http(`${serverBase()}/status/${id}`, { headers: authH(), native: false });
       return { status: d.status, progress: d.progress, stage: d.stage, error: d.error, warning: d.warning,
-        modelUrl: d.model_url && serverBase() + d.model_url, thumbnail: d.thumbnail_url && serverBase() + d.thumbnail_url };
+        modelUrl: d.model_url && serverBase() + d.model_url, imageUrl: d.image_url && serverBase() + d.image_url, thumbnail: d.thumbnail_url && serverBase() + d.thumbnail_url };
     },
     headers: authH,
   },
@@ -227,7 +234,19 @@ function setLighting(mode) {
   $('#light-btn').textContent = { studio: '☀', soft: '⛅', flat: '◐' }[mode];
 }
 
+// ---- 2D art viewer
+async function showArt(job) {
+  try {
+    $('#job-status').textContent = 'Downloading image…';
+    const buf = await http(job.imageUrl, { binary: true, native: false });
+    state.art = { buf, name: slug(job.prompt) + '.png', dataUrl: 'data:image/png;base64,' + bufToB64(buf) };
+    $('#art-view').src = state.art.dataUrl; $('#art-view').hidden = false; $('#empty').hidden = true;
+    $('#stats').textContent = ''; $('#art-actions').hidden = false; $('#job-status').textContent = 'Done';
+  } catch (e) { showError(`Could not load the image: ${e.message}`); }
+}
+
 function showModel(obj) {
+  $('#art-view').hidden = true;
   if (state.model) { realMaterials(); scene.remove(state.model); }
   fixMaterials(obj);
   const box = new THREE.Box3().setFromObject(obj);
@@ -322,6 +341,8 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   state.mode = t.dataset.mode;
   $('#text-input').hidden = state.mode !== 'text';
   $('#image-input').hidden = state.mode !== 'image';
+  $('#art-input').hidden = state.mode !== '2d';
+  document.querySelectorAll('.only3d').forEach(el => el.hidden = state.mode === '2d');
 });
 const setPoly = n => { $('#poly').value = n; $('#poly-val').textContent = Number(n).toLocaleString(); };
 $('#poly').oninput = e => { setPoly(e.target.value); $('#usage').value = 'custom'; };
@@ -395,6 +416,7 @@ async function startJob(req, label) {
   try { localStorage.setItem('model-forge-lastreq', JSON.stringify(state.lastReq)); } catch {}
   $('#job').hidden = false; $('#job-pct').textContent = ''; $('#job-bar').style.width = '0%';
   $('#job-status').textContent = req.image || req.images ? 'Uploading photo…' : 'Sending…';
+  $('#art-actions').hidden = true;
   try {
     const id = await ENGINES[req.provider].create(req);
     const job = { id, provider: req.provider, prompt: label, mode: req.mode, created: Date.now(), status: 'queued',
@@ -406,6 +428,13 @@ $('#generate').onclick = () => {
   const provider = $('#provider').value;
   if (!provider) return openSettings();
   const base = { provider, texture: $('#texture').checked, polycount: Number($('#poly').value), quality: $('#quality').value };
+  if (state.mode === '2d') {
+    const prompt = $('#art-prompt').value.trim();
+    if (!prompt) return showError('Describe the image first.');
+    if (provider !== 'server') return showError('2D art needs your own AI server — choose "My AI server" as the engine.');
+    return startJob({ provider, mode: '2d', prompt, style: $('#art-style').value, aspect: $('#art-aspect').value,
+      transparent: $('#art-transparent').checked, quality: $('#quality').value }, prompt);
+  }
   if (state.mode === 'text') {
     const prompt = $('#prompt').value.trim();
     if (!prompt) return showError('Type a prompt first.');
@@ -433,7 +462,7 @@ function poll(job) {
       $('#job-status').textContent = s.stage || { queued: 'Queued…', running: 'Generating…', succeeded: 'Done', failed: 'Failed' }[s.status] || s.status;
       $('#job-pct').textContent = `${Math.round(s.progress || 0)}%`; $('#job-bar').style.width = `${s.progress || 0}%`;
       if (s.status === 'succeeded') {
-        Object.assign(job, { status: 'succeeded', modelUrl: s.modelUrl, demo: s.demo, canRefine: s.canRefine, thumb: job.thumb || s.thumbnail, warning: s.warning });
+        Object.assign(job, { status: 'succeeded', imageUrl: s.imageUrl, modelUrl: s.modelUrl, demo: s.demo, canRefine: s.canRefine, thumb: job.thumb || s.thumbnail, warning: s.warning });
         saveHistory(job); $('#generate').disabled = false; await openJob(job);
         if (s.warning) toast(s.warning);
         $('#variant').hidden = !(state.lastReq && job.provider === 'server');
@@ -462,6 +491,8 @@ async function openJob(job) {
   state.current = job; showError('');
   $('#refine').hidden = !job.canRefine;
   if (job.status !== 'succeeded') return poll(job);
+  $('#art-actions').hidden = true;
+  if (job.imageUrl) return showArt(job);
   if (job.demo) { showModel(demoModel(job.prompt)); $('#job-status').textContent = 'Done'; return; }
   try {
     $('#job-status').textContent = 'Downloading model…';
@@ -565,6 +596,17 @@ $('#r-record').onclick = async () => {
   recording = false; $('#r-record').disabled = $('#r-close').disabled = false; reelPreview();
 };
 
+$('#art-save').onclick = async () => {
+  if (!state.art) return;
+  try { await saveFile(state.art.buf, state.art.name, 'image/png'); } catch (e) { if (!/cancel/i.test(e.message)) showError('Save failed: ' + e.message); }
+};
+$('#art-to3d').onclick = () => {
+  if (!state.art) return;
+  state.image = state.art.dataUrl; state.multi = false;
+  $('#preview').src = state.image; $('#preview').hidden = false; $('#drop-hint').hidden = true;
+  document.querySelector('.tab[data-mode=image]').click(); document.querySelector('.vtab[data-views=single]').click();
+  toast('Image ready — choose your settings and tap Generate to make it 3D.');
+};
 $('#variant').onclick = () => {
   if (!state.lastReq) return;
   const { req, label } = state.lastReq;

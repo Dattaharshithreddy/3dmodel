@@ -18,6 +18,7 @@ Environment variables:
   SHAPE_SUBFOLDER default "hunyuan3d-dit-v2-mini" (use "hunyuan3d-dit-v2-0" with tencent/Hunyuan3D-2)
   MV_MODEL      default "tencent/Hunyuan3D-2mv"   multi-view model (front/left/back/right photos)
   MV_SUBFOLDER  default "hunyuan3d-dit-v2-mv"     ("hunyuan3d-dit-v2-mv-turbo" = faster, slightly less detail)
+  IMAGE_MODEL   default "stabilityai/stable-diffusion-xl-base-1.0"  (2D art mode; any SDXL model id works)
   TEXTURE       "1" to enable texture painting (default: on if the texture module is installed)
   LOW_VRAM      "1" to offload models to CPU between steps (slower, fits 12-16 GB GPUs)
   API_TOKEN     if set, clients must send "Authorization: Bearer <token>"
@@ -41,6 +42,8 @@ MV_MODEL = os.environ.get("MV_MODEL", "tencent/Hunyuan3D-2mv")
 MV_SUBFOLDER = os.environ.get("MV_SUBFOLDER", "hunyuan3d-dit-v2-mv")
 MV_VIEWS = ("front", "left", "back", "right")
 T2I_MODEL = os.environ.get("T2I_MODEL", "Tencent-Hunyuan/HunyuanDiT-v1.1-Diffusers-Distilled")
+IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")   # 2D art generator
+IMAGE_VAE = os.environ.get("IMAGE_VAE", "madebyollin/sdxl-vae-fp16-fix")
 LOW_VRAM = os.environ.get("LOW_VRAM", "0") == "1"
 API_TOKEN = os.environ.get("API_TOKEN", "")
 
@@ -57,7 +60,7 @@ class Engine:
     def __init__(self):
         self.lock = threading.Lock()
         self.on_status = lambda msg: None   # set per job: shows "Downloading…" in the app
-        self._shape = self._mv = self._paint = self._t2i = self._rembg = None
+        self._shape = self._mv = self._paint = self._t2i = self._rembg = self._img = None
         try:  # textures need the compiled CUDA rasterizer (its kernel links against torch: import torch first)
             import torch  # noqa: F401
             import custom_rasterizer  # noqa: F401
@@ -75,8 +78,29 @@ class Engine:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    def image2d(self):
+        """SDXL text-to-image for 2D art mode."""
+        if self._img is None:
+            for other in ("_shape", "_mv", "_paint"):
+                self._free(other)
+            import torch
+            from diffusers import AutoencoderKL, StableDiffusionXLPipeline
+            from huggingface_hub import try_to_load_from_cache
+            if not isinstance(try_to_load_from_cache(IMAGE_MODEL, "model_index.json"), str):
+                self.on_status("Downloading 2D art AI model (first time only, ~7 GB)")
+            vae = AutoencoderKL.from_pretrained(IMAGE_VAE, torch_dtype=torch.float16)
+            pipe = StableDiffusionXLPipeline.from_pretrained(IMAGE_MODEL, vae=vae, torch_dtype=torch.float16,
+                                                             variant="fp16", use_safetensors=True)
+            if LOW_VRAM:
+                pipe.enable_model_cpu_offload()
+            else:
+                pipe.to("cuda")
+            self._img = pipe
+        return self._img
+
     def multiview(self):
         if self._mv is None:
+            self._free("_img")
             self._free("_shape")  # on small GPUs keep only one shape model in memory
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
             self._free("_paint")
@@ -90,6 +114,7 @@ class Engine:
         if self._shape is None:
             self._free("_mv")
             self._free("_paint")
+            self._free("_img")
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
             if not _model_cached(SHAPE_MODEL, SHAPE_SUBFOLDER):
                 self.on_status("Downloading 3D shape AI model (first time only, ~5 min)")
@@ -172,7 +197,8 @@ def load_tasks():
 def fingerprint(req) -> str:
     """Same inputs + settings -> same id (texture on/off excluded: the shape is shared)."""
     import hashlib
-    key = {k: req.get(k) for k in ("mode", "prompt", "image", "images", "polycount", "steps", "seed", "quality")}
+    key = {k: req.get(k) for k in ("mode", "prompt", "image", "images", "polycount", "steps", "seed", "quality",
+                                       "style", "aspect", "transparent", "negative")}
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:24]
 
 
@@ -182,6 +208,55 @@ QUALITY = {
     "high":  {"steps": 30, "octree": 384, "chunks": 20000},
     "ultra": {"steps": 50, "octree": 512, "chunks": 8000},
 }
+
+
+# 2D art presets
+ART_STYLES = {
+    "": "",
+    "realistic": "photorealistic, ultra detailed, sharp focus, professional photography, natural lighting",
+    "3d": "3D render, Pixar style character, soft studio lighting, octane render, highly detailed",
+    "anime": "anime style, clean line art, vibrant colors, detailed illustration",
+    "cartoon": "cartoon style, bold outlines, flat vibrant colors, vector illustration",
+    "pixel": "pixel art, 16-bit game sprite, crisp pixels, limited color palette",
+    "concept": "concept art, digital painting, dramatic lighting, highly detailed, artstation quality",
+    "sticker": "sticker design, thick white outline, flat colors, simple cute illustration",
+    "icon": "game icon, centered single object, glossy, highly detailed, dark simple background",
+}
+ART_SIZES = {"square": (1024, 1024), "portrait": (832, 1216), "landscape": (1216, 832)}
+ART_STEPS = {"fast": 20, "high": 30, "ultra": 45}
+ART_NEGATIVE = "blurry, low quality, lowres, jpeg artifacts, deformed, extra limbs, bad anatomy, watermark, text, signature, cropped"
+
+
+def make_2d(t, req, task_id):
+    import torch
+    w, h = ART_SIZES.get(req.get("aspect") or "square", ART_SIZES["square"])
+    style = ART_STYLES.get(req.get("style") or "", "")
+    prompt = ", ".join(x for x in [req["prompt"].strip(), style,
+                                   "isolated on plain white background, full view" if req.get("transparent") else ""] if x)
+    negative = ", ".join(x for x in [ART_NEGATIVE, (req.get("negative") or "").strip()] if x)
+    set_stage(t, "Loading 2D art AI", 5)
+    pipe = engine.image2d()
+    steps = ART_STEPS.get(req.get("quality") or "high", 30)
+    set_stage(t, "Drawing", 15)
+
+    def on_step(p, i, ts, kw):
+        t.update(progress=15 + int(70 * (i + 1) / steps))
+        return kw
+
+    gen = torch.Generator("cpu").manual_seed(int(req.get("seed") or 1234))
+    image = pipe(prompt=prompt, negative_prompt=negative, width=w, height=h, num_inference_steps=steps,
+                 guidance_scale=6.5, generator=gen, callback_on_step_end=on_step).images[0]
+    if req.get("transparent"):
+        set_stage(t, "Removing background", 90)
+        image = engine.rembg()(image.convert("RGBA"))
+    set_stage(t, "Saving", 95)
+    image.save(OUT / f"{task_id}.png")
+    thumb = image.convert("RGBA").copy()
+    thumb.thumbnail((256, 256))
+    thumb.save(OUT / f"{task_id}_input.png")
+    engine._free("_img")   # LOW_VRAM: make room for 3D models again
+    t.update(status="succeeded", progress=100, stage="Done", image_url=f"/images/{task_id}.png",
+             thumbnail_url=f"/inputs/{task_id}.png", textured=bool(req.get("texture", True)))
 
 
 def matte(mesh):
@@ -220,6 +295,9 @@ def run(task_id: str):
         gen = torch.manual_seed(int(req.get("seed") or 1234))
         q = QUALITY.get(req.get("quality") or "high", QUALITY["high"])
         steps = int(req.get("steps") or q["steps"])
+        if req["mode"] == "2d":
+            make_2d(t, req, task_id)
+            return
         fp = t["fp"]
         shape_file, cut_file = OUT / f"shape_{fp}.glb", OUT / f"cut_{fp}.png"
         mesh = None
@@ -319,7 +397,7 @@ app = FastAPI(title="Model Forge AI server")
 @app.middleware("http")
 async def auth(request: Request, call_next):
     if API_TOKEN and request.method != "OPTIONS" and request.url.path != "/health" \
-            and not request.url.path.startswith(("/models/", "/inputs/")):  # unguessable ids act as share links
+            and not request.url.path.startswith(("/models/", "/inputs/", "/images/")):  # unguessable ids act as share links
         if request.headers.get("authorization") != f"Bearer {API_TOKEN}":
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -388,7 +466,7 @@ async def http_error(request: Request, exc: HTTPException):
 def health():
     import torch
     return {"ok": True, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "multiview": True, "mv_model": MV_MODEL, "qualities": list(QUALITY),
+            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "multiview": True, "mv_model": MV_MODEL, "qualities": list(QUALITY), "art2d": True,
             "queue": jobs.qsize(), "auth": bool(API_TOKEN), "version": 2}
 
 
@@ -397,15 +475,22 @@ async def generate(request: Request):
     b = await read_body(request)
     print("generate request:", {k: (type(v).__name__, len(v) if isinstance(v, (str, dict)) else v) for k, v in b.items()}, flush=True)
     mode = str(b.get("mode") or "").strip().lower()
-    if mode not in ("text", "image", "multiview"):
-        bad(f"mode must be text, image or multiview (got {b.get('mode')!r})")
+    if mode not in ("text", "image", "multiview", "2d"):
+        bad(f"mode must be text, image, multiview or 2d (got {b.get('mode')!r})")
     req = {"mode": mode, "prompt": str(b.get("prompt") or "").strip(), "image": b.get("image"),
            "texture": to_bool(b.get("texture")), "polycount": to_int(b.get("polycount"), "polycount", 40000),
            "steps": to_int(b.get("steps"), "steps", None), "seed": to_int(b.get("seed"), "seed", None),
            "quality": str(b.get("quality") or "high").lower()}
     if req["quality"] not in QUALITY:
         bad("quality must be fast, high or ultra")
-    if mode == "text" and not req["prompt"]:
+    if mode == "2d":
+        req.update(style=str(b.get("style") or "").lower(), aspect=str(b.get("aspect") or "square").lower(),
+                   transparent=to_bool(b.get("transparent"), False), negative=str(b.get("negative") or "")[:500])
+        if req["style"] not in ART_STYLES:
+            bad(f"style must be one of: {', '.join(k for k in ART_STYLES if k)}")
+        if req["aspect"] not in ART_SIZES:
+            bad("aspect must be square, portrait or landscape")
+    if mode in ("text", "2d") and not req["prompt"]:
         bad("Type a prompt first")
     if mode == "image" and not (isinstance(req["image"], str) and req["image"]):
         bad("No photo was received — pick a photo and try again")
@@ -423,7 +508,7 @@ async def generate(request: Request):
                 continue
             if old["status"] in ("queued", "running"):
                 return {"task_id": old_id, "reused": "running"}      # reconnect instead of queueing a duplicate
-            if old["status"] == "succeeded" and (OUT / f"{old_id}.glb").exists() and old.get("textured", True) == req["texture"]:
+            if old["status"] == "succeeded" and ((OUT / f"{old_id}.glb").exists() or (OUT / f"{old_id}.png").exists()) and old.get("textured", True) == req["texture"]:
                 return {"task_id": old_id, "reused": "finished"}     # same inputs already done -> instant result
             break
     tid = uuid.uuid4().hex[:24]  # 96 random bits: download links are shareable
@@ -448,6 +533,14 @@ def model(name: str):
     if not f.exists() or f.suffix != ".glb":
         raise HTTPException(404)
     return FileResponse(f, media_type="model/gltf-binary")
+
+
+@app.get("/images/{name}")
+def art_image(name: str):
+    f = OUT / Path(name).name
+    if not f.exists() or f.suffix != ".png" or f.stem.endswith("_input") or f.stem.startswith("cut_"):
+        raise HTTPException(404)
+    return FileResponse(f, media_type="image/png")
 
 
 @app.get("/inputs/{name}")

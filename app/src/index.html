@@ -16,6 +16,7 @@
 <body>
   <main class="stage">
     <div id="viewport"></div>
+    <img id="art-view" alt="" hidden />
     <div id="empty" class="empty">
       <div class="empty-icon">◇</div>
       <p>Describe something or pick a photo,<br>then tap <b>Generate</b>.</p>
@@ -44,6 +45,7 @@
     <div class="tabs" role="tablist">
       <button class="tab active" data-mode="text">Text to 3D</button>
       <button class="tab" data-mode="image">Image to 3D</button>
+      <button class="tab" data-mode="2d">2D art</button>
     </div>
 
     <section id="text-input">
@@ -58,6 +60,30 @@
         <option value="chibi, cute, big head, small body">Chibi</option>
         <option value="sci-fi, hard surface, metallic panels">Sci-fi hard surface</option>
       </select>
+    </section>
+
+    <section id="art-input" hidden>
+      <label for="art-prompt">Describe the image</label>
+      <textarea id="art-prompt" rows="3" placeholder="A brave fox knight with a tiny sword, full body"></textarea>
+      <div class="row2">
+        <label for="art-style">Style<select id="art-style">
+          <option value="3d">3D render (Pixar-like)</option>
+          <option value="realistic">Realistic photo</option>
+          <option value="anime">Anime</option>
+          <option value="cartoon">Cartoon</option>
+          <option value="pixel">Pixel art</option>
+          <option value="concept">Concept art</option>
+          <option value="sticker">Sticker</option>
+          <option value="icon">Game icon</option>
+          <option value="">None (prompt only)</option>
+        </select></label>
+        <label for="art-aspect">Shape<select id="art-aspect">
+          <option value="square">Square 1024×1024</option>
+          <option value="portrait">Portrait 832×1216</option>
+          <option value="landscape">Landscape 1216×832</option>
+        </select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="art-transparent" /> Transparent background (sprites, stickers, best for 3D)</label>
     </section>
 
     <section id="image-input" hidden>
@@ -84,8 +110,8 @@
       </div>
     </section>
 
-    <label for="usage">Made for</label>
-    <select id="usage">
+    <label for="usage" class="only3d">Made for</label>
+    <select id="usage" class="only3d">
       <option value="mobile">🎮 Mobile game (light, ~8k triangles)</option>
       <option value="pc" selected>🎮 PC / console game (~30k)</option>
       <option value="hero">🎬 Hero asset / reels (~80k)</option>
@@ -96,10 +122,10 @@
     <label for="provider">Engine</label>
     <select id="provider"></select>
 
-    <label class="check"><input type="checkbox" id="texture" checked /> Generate textures (color)</label>
+    <label class="check only3d"><input type="checkbox" id="texture" checked /> Generate textures (color)</label>
 
-    <label for="poly">Max triangles <span class="muted" id="poly-val">30,000</span></label>
-    <input id="poly" type="range" min="2000" max="150000" step="1000" value="30000" />
+    <label for="poly" class="only3d">Max triangles <span class="muted" id="poly-val">30,000</span></label>
+    <input id="poly" class="only3d" type="range" min="2000" max="150000" step="1000" value="30000" />
 
     <label for="quality">Quality</label>
     <select id="quality">
@@ -116,7 +142,11 @@
     </div>
     <p id="error" class="error" hidden></p>
     <button id="refine" class="secondary" hidden>✦ Add textures to this draft</button>
-    <button id="variant" class="secondary" hidden>🎲 Make a different version (same photo)</button>
+    <div id="art-actions" class="row2" hidden>
+      <button id="art-save" class="secondary">⬇ Save image</button>
+      <button id="art-to3d" class="secondary">🧊 Make 3D from this</button>
+    </div>
+    <button id="variant" class="secondary" hidden>🎲 Make a different version</button>
 
     <h2>Export for games</h2>
     <div class="row2">

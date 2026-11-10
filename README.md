@@ -69,6 +69,15 @@ Open a model and tap **🎬 Make a reel from this model**. Then choose:
 
 Tap **Record**, and the video is saved or shared straight from your phone (MP4 where the phone supports it, otherwise WebM). Add music in Instagram, YouTube or CapCut. The *Green screen* background lets you put the model into other videos.
 
+## 🎨 2D art
+The **2D art** tab makes high-quality 1024px images on your own server with **Stable Diffusion XL** (open source).
+- **Styles:** 3D render, realistic photo, anime, cartoon, pixel art, concept art, sticker, game icon.
+- **Shapes:** square, portrait, landscape.
+- **Transparent background:** cuts the subject out, for game sprites and stickers.
+- **Save image** saves or shares the PNG. **Make 3D from this** sends it straight to Image to 3D.
+- The first use downloads the model (about 7 GB). After that, an image takes roughly 30–90 seconds on a T4.
+- To use a different SDXL model (for example an anime one), set `IMAGE_MODEL` in `/etc/modelforge.env`.
+
 ## Quality and lighting
 - **Quality:** *Fast* (rough, quickest), *High* (default), or *Ultra* (finest detail: more AI steps and a finer 3D grid, about 2× slower). On a 16 GB GPU (T4), Ultra may run out of memory; if it fails, use High or a 24 GB GPU.
 - **☀ button in the viewer:** switches the lighting between studio, soft, and true colors (no shading).

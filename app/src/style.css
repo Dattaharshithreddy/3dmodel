@@ -110,3 +110,9 @@ details label { margin-top: 8px; }
   font-size: 11px; padding: 2px 8px; border-radius: 99px; }
 
 .error.note { color: var(--accent2); }
+
+.tabs { grid-template-columns: repeat(3, 1fr); }
+.small-tabs { grid-template-columns: 1fr 1fr; }
+.tab { font-size: 13px; padding: 8px 4px; }
+#art-view { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 2;
+  background: #0d0f14 repeating-conic-gradient(#1a1d26 0% 25%, #12141b 0% 50%) 50% / 24px 24px; }
