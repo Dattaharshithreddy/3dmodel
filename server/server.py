@@ -73,9 +73,7 @@ class Engine:
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
             self._mv = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
                 MV_MODEL, subfolder=MV_SUBFOLDER, use_safetensors=True)
-            if LOW_VRAM and hasattr(self._mv, "enable_model_cpu_offload"):
-                self._mv.enable_model_cpu_offload()
-        return self._mv
+        return self._on_gpu(self._mv)
 
     def shape(self):
         if self._shape is None:
@@ -83,9 +81,26 @@ class Engine:
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
             self._shape = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
                 SHAPE_MODEL, subfolder=SHAPE_SUBFOLDER, use_safetensors=True)
-            if LOW_VRAM and hasattr(self._shape, "enable_model_cpu_offload"):
-                self._shape.enable_model_cpu_offload()
-        return self._shape
+        return self._on_gpu(self._shape)
+
+    # Hunyuan3D's shape pipeline has a broken enable_model_cpu_offload (it uses a missing .components), so on
+    # small GPUs we park the shape model in CPU RAM while textures are painted and bring it back afterwards.
+    def _on_gpu(self, pipe):
+        import torch
+        if torch.cuda.is_available() and getattr(pipe, "device", None) is not None and pipe.device.type != "cuda":
+            pipe.to("cuda")
+        return pipe
+
+    def park_shape_models(self):
+        if not LOW_VRAM:
+            return
+        import gc, torch
+        for p in (self._shape, self._mv):
+            if p is not None and hasattr(p, "to"):
+                p.to("cpu")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def paint(self):
         if self._paint is None:
@@ -170,6 +185,7 @@ def run(task_id: str):
         # 3. texture
         if req.get("texture", True) and engine.texture_available:
             set_stage(t, "Painting textures", 65)
+            engine.park_shape_models()
             mesh = engine.paint()(mesh, image=image)
 
         set_stage(t, "Saving", 95)
