@@ -1,0 +1,9 @@
+# Versions Hunyuan3D-2 works with. Newer majors break it:
+#  - transformers 5.x renamed the DINOv2 attention weights (q_proj/k_proj/v_proj), so Tencent's checkpoints fail
+#    with "Missing key(s) in state_dict for SingleImageEncoder"
+#  - latest diffusers/transformers also require torch >= 2.6
+transformers==4.53.3
+tokenizers==0.21.4
+diffusers==0.34.0
+huggingface-hub==0.34.4
+accelerate==1.9.0

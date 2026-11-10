@@ -7,9 +7,9 @@ set -e
 cd "$(dirname "$0")"
 PY="${PYTHON:-python3}"   # set PYTHON=/path/to/python to install into a specific environment
 if [ ! -d Hunyuan3D-2 ]; then git clone --depth 1 https://github.com/Tencent/Hunyuan3D-2; fi
-"$PY" -m pip install -r Hunyuan3D-2/requirements.txt
-"$PY" -m pip install -e Hunyuan3D-2
-"$PY" -m pip install -r requirements.txt
+"$PY" -m pip install -r Hunyuan3D-2/requirements.txt -c constraints.txt
+"$PY" -m pip install -e Hunyuan3D-2 -c constraints.txt
+"$PY" -m pip install -r requirements.txt -r constraints.txt -c constraints.txt
 
 [ "${SKIP_TEXTURE:-0}" = "1" ] && { echo "Skipping textures (SKIP_TEXTURE=1)."; exit 0; }
 
