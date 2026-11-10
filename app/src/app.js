@@ -81,7 +81,7 @@ const ENGINES = {
     async create(req) {
       if (req.mode === '2d') {
         const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(), native: false,
-          json: { mode: '2d', prompt: req.prompt, style: req.style, aspect: req.aspect, transparent: req.transparent,
+          json: { mode: '2d', prompt: req.prompt, image: req.image, strength: req.strength, style: req.style, aspect: req.aspect, transparent: req.transparent,
                   quality: req.quality, seed: req.seed, fresh: !!req.seed } });
         if (d.reused) toast(d.reused === 'running' ? 'Already being made — reconnected to it.' : 'Same prompt & settings already done — showing it.');
         return d.task_id;
@@ -381,6 +381,22 @@ async function loadImage(f) {
   try { state.image = await readImage(f); $('#preview').src = state.image; $('#preview').hidden = false; $('#drop-hint').hidden = true; }
   catch (e) { showError(e.message); }
 }
+// 2D art: optional photo to redraw
+const artFile = $('#art-file');
+function renderArtPhoto() {
+  const has = !!state.artPhoto;
+  $('#art-photo').hidden = !has; $('#art-drop-hint').hidden = has; $('#art-photo-clear').hidden = !has;
+  $('#art-strength-row').hidden = !has; $('#art-aspect').disabled = has;
+  $('#art-prompt-opt').textContent = has ? '(optional with a photo)' : '';
+  if (has) $('#art-photo').src = state.artPhoto;
+}
+$('#art-drop').onclick = () => artFile.click();
+$('#art-photo-clear').onclick = e => { e.stopPropagation(); state.artPhoto = null; renderArtPhoto(); };
+artFile.onchange = async () => {
+  try { state.artPhoto = await readImage(artFile.files[0]); renderArtPhoto(); } catch (e) { showError(e.message); }
+  artFile.value = '';
+};
+
 // multi-view slots
 document.querySelectorAll('.vtab').forEach(b => b.onclick = () => {
   document.querySelectorAll('.vtab').forEach(x => x.classList.toggle('active', x === b));
@@ -430,10 +446,14 @@ $('#generate').onclick = () => {
   const base = { provider, texture: $('#texture').checked, polycount: Number($('#poly').value), quality: $('#quality').value };
   if (state.mode === '2d') {
     const prompt = $('#art-prompt').value.trim();
-    if (!prompt) return showError('Describe the image first.');
+    const photo = state.artPhoto || undefined, style = $('#art-style').value;
+    if (!prompt && !photo) return showError('Describe the image, or add a photo to redraw.');
+    if (!prompt && photo && !style) return showError('Pick a style, or describe how to redraw the photo.');
     if (provider !== 'server') return showError('2D art needs your own AI server — choose "My AI server" as the engine.');
-    return startJob({ provider, mode: '2d', prompt, style: $('#art-style').value, aspect: $('#art-aspect').value,
-      transparent: $('#art-transparent').checked, quality: $('#quality').value }, prompt);
+    const styleName = $('#art-style').selectedOptions[0].textContent;
+    return startJob({ provider, mode: '2d', prompt, image: photo, strength: photo ? Number($('#art-strength').value) : undefined,
+      style, aspect: $('#art-aspect').value, transparent: $('#art-transparent').checked, quality: $('#quality').value },
+      prompt || `Photo → ${styleName}`);
   }
   if (state.mode === 'text') {
     const prompt = $('#prompt').value.trim();

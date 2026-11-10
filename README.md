@@ -73,6 +73,7 @@ Tap **Record**, and the video is saved or shared straight from your phone (MP4 w
 The **2D art** tab makes high-quality 1024px images on your own server with **Stable Diffusion XL** (open source).
 - **Styles:** 3D render, realistic photo, anime, cartoon, pixel art, concept art, sticker, game icon.
 - **Shapes:** square, portrait, landscape.
+- **Photo → 2D art:** add a photo and it is redrawn in the chosen style, keeping the pose and layout. "How much to change" sets how close it stays to the photo.
 - **Transparent background:** cuts the subject out, for game sprites and stickers.
 - **Save image** saves or shares the PNG. **Make 3D from this** sends it straight to Image to 3D.
 - The first use downloads the model (about 7 GB). After that, an image takes roughly 30–90 seconds on a T4.

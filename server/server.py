@@ -31,7 +31,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from PIL import Image
+from PIL import Image, ImageOps
 
 OUT = Path(os.environ.get("OUTPUT_DIR", Path(__file__).parent / "outputs"))
 OUT.mkdir(parents=True, exist_ok=True)
@@ -91,12 +91,18 @@ class Engine:
             vae = AutoencoderKL.from_pretrained(IMAGE_VAE, torch_dtype=torch.float16)
             pipe = StableDiffusionXLPipeline.from_pretrained(IMAGE_MODEL, vae=vae, torch_dtype=torch.float16,
                                                              variant="fp16", use_safetensors=True)
-            if LOW_VRAM:
-                pipe.enable_model_cpu_offload()
-            else:
+            from diffusers import StableDiffusionXLImg2ImgPipeline
+            redraw = StableDiffusionXLImg2ImgPipeline(**pipe.components)   # shares the same weights (photo -> 2D art)
+            if not LOW_VRAM:
                 pipe.to("cuda")
-            self._img = pipe
+            self._img = {"draw": pipe, "redraw": redraw}
         return self._img
+
+    def art_pipe(self, kind):
+        p = self.image2d()[kind]
+        if LOW_VRAM:
+            p.enable_model_cpu_offload()   # re-attaches the offload hooks to whichever of the two is used
+        return p
 
     def multiview(self):
         if self._mv is None:
@@ -198,7 +204,7 @@ def fingerprint(req) -> str:
     """Same inputs + settings -> same id (texture on/off excluded: the shape is shared)."""
     import hashlib
     key = {k: req.get(k) for k in ("mode", "prompt", "image", "images", "polycount", "steps", "seed", "quality",
-                                       "style", "aspect", "transparent", "negative")}
+                                       "style", "aspect", "transparent", "negative", "strength")}
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:24]
 
 
@@ -235,17 +241,36 @@ def make_2d(t, req, task_id):
                                    "isolated on plain white background, full view" if req.get("transparent") else ""] if x)
     negative = ", ".join(x for x in [ART_NEGATIVE, (req.get("negative") or "").strip()] if x)
     set_stage(t, "Loading 2D art AI", 5)
-    pipe = engine.image2d()
     steps = ART_STEPS.get(req.get("quality") or "high", 30)
-    set_stage(t, "Drawing", 15)
+    gen = torch.Generator("cpu").manual_seed(int(req.get("seed") or 1234))
+    src = None
+    if req.get("image"):
+        # Photo -> 2D art: redraw the uploaded picture in the chosen style, keeping its layout.
+        src = ImageOps.exif_transpose(Image.open(io.BytesIO(base64.b64decode(req["image"].split(",", 1)[-1]))))
+        if src.mode in ("RGBA", "LA", "P"):
+            rgba = src.convert("RGBA")
+            src = Image.new("RGB", rgba.size, "white")
+            src.paste(rgba, mask=rgba.split()[3])
+        src = src.convert("RGB")
+        scale = (1024 * 1024 / (src.width * src.height)) ** 0.5      # ~1 megapixel, same proportions as the photo
+        w = max(512, min(1536, round(src.width * scale / 64) * 64))
+        h = max(512, min(1536, round(src.height * scale / 64) * 64))
+        src = src.resize((w, h), Image.LANCZOS)
+    strength = min(0.95, max(0.15, float(req.get("strength") or 0.55)))
+    total = max(1, int(steps * strength)) if src is not None else steps
+    pipe = engine.art_pipe("redraw" if src is not None else "draw")
+    set_stage(t, "Redrawing your photo" if src is not None else "Drawing", 15)
 
     def on_step(p, i, ts, kw):
-        t.update(progress=15 + int(70 * (i + 1) / steps))
+        t.update(progress=15 + int(70 * min(1, (i + 1) / total)))
         return kw
 
-    gen = torch.Generator("cpu").manual_seed(int(req.get("seed") or 1234))
-    image = pipe(prompt=prompt, negative_prompt=negative, width=w, height=h, num_inference_steps=steps,
-                 guidance_scale=6.5, generator=gen, callback_on_step_end=on_step).images[0]
+    if src is not None:
+        image = pipe(prompt=prompt, negative_prompt=negative, image=src, strength=strength, num_inference_steps=steps,
+                     guidance_scale=6.5, generator=gen, callback_on_step_end=on_step).images[0]
+    else:
+        image = pipe(prompt=prompt, negative_prompt=negative, width=w, height=h, num_inference_steps=steps,
+                     guidance_scale=6.5, generator=gen, callback_on_step_end=on_step).images[0]
     if req.get("transparent"):
         set_stage(t, "Removing background", 90)
         image = engine.rembg()(image.convert("RGBA"))
@@ -490,7 +515,15 @@ async def generate(request: Request):
             bad(f"style must be one of: {', '.join(k for k in ART_STYLES if k)}")
         if req["aspect"] not in ART_SIZES:
             bad("aspect must be square, portrait or landscape")
-    if mode in ("text", "2d") and not req["prompt"]:
+        try:
+            req["strength"] = float(b.get("strength") or 0.55)
+        except (TypeError, ValueError):
+            bad("strength must be a number between 0.15 and 0.95")
+        if not isinstance(req["image"], str) or not req["image"]:
+            req["image"] = None
+        if not req["prompt"] and req["image"] and not req["style"]:
+            bad("Pick a style or describe how to redraw the photo")
+    if mode == "text" and not req["prompt"] or mode == "2d" and not req["prompt"] and not req.get("image"):
         bad("Type a prompt first")
     if mode == "image" and not (isinstance(req["image"], str) and req["image"]):
         bad("No photo was received — pick a photo and try again")

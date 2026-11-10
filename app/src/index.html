@@ -63,7 +63,22 @@
     </section>
 
     <section id="art-input" hidden>
-      <label for="art-prompt">Describe the image</label>
+      <label>Photo to redraw <span class="muted">(optional)</span></label>
+      <div id="art-drop" class="drop small-drop" tabindex="0">
+        <img id="art-photo" alt="" hidden />
+        <span id="art-drop-hint">Tap to add a photo — it will be redrawn in your style<br><span class="muted">Leave empty to create from text only</span></span>
+        <button type="button" id="art-photo-clear" class="clear" hidden>✕</button>
+        <input id="art-file" type="file" accept="image/*" hidden />
+      </div>
+      <div id="art-strength-row" hidden>
+        <label for="art-strength">How much to change the photo</label>
+        <select id="art-strength">
+          <option value="0.35">A little — stays very close to the photo</option>
+          <option value="0.55" selected>Balanced — clear new style, same pose</option>
+          <option value="0.75">A lot — strong style, looser likeness</option>
+        </select>
+      </div>
+      <label for="art-prompt">Describe the image <span class="muted" id="art-prompt-opt"></span></label>
       <textarea id="art-prompt" rows="3" placeholder="A brave fox knight with a tiny sword, full body"></textarea>
       <div class="row2">
         <label for="art-style">Style<select id="art-style">
