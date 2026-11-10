@@ -69,6 +69,11 @@ Open a model and tap **🎬 Make a reel from this model**. Then choose:
 
 Tap **Record**, and the video is saved or shared straight from your phone (MP4 where the phone supports it, otherwise WebM). Add music in Instagram, YouTube or CapCut. The *Green screen* background lets you put the model into other videos.
 
+## Quality and lighting
+- **Quality:** *Fast* (rough, quickest), *High* (default), or *Ultra* (finest detail: more AI steps and a finer 3D grid, about 2× slower). On a 16 GB GPU (T4), Ultra may run out of memory; if it fails, use High or a 24 GB GPU.
+- **☀ button in the viewer:** switches the lighting between studio, soft, and true colors (no shading).
+- The triangle count sets how smooth the saved model is. **Quality** is the setting that adds real detail.
+
 ## Tips for good results
 - **Photos:** one object, centered, plain background, good lighting.
 - **Prompts:** describe one object, e.g. "a wooden treasure chest with gold trim, stylized".

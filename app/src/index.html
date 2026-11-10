@@ -25,6 +25,7 @@
       <button data-act="wire" class="toggle" title="Wireframe">▦</button>
       <button data-act="grid" class="toggle on" title="Grid">⊞</button>
       <button data-act="reset" title="Re-center">⌖</button>
+      <button data-act="light" title="Lighting: studio / soft / true colors" id="light-btn">☀</button>
       <span class="sep"></span>
       <button data-export="glb">GLB</button>
       <button data-export="obj">OBJ</button>
@@ -99,6 +100,13 @@
 
     <label for="poly">Max triangles <span class="muted" id="poly-val">30,000</span></label>
     <input id="poly" type="range" min="2000" max="150000" step="1000" value="30000" />
+
+    <label for="quality">Quality</label>
+    <select id="quality">
+      <option value="fast">⚡ Fast — rough shape, quickest</option>
+      <option value="high" selected>✦ High — good detail (recommended)</option>
+      <option value="ultra">💎 Ultra — sharpest detail, ~2× slower</option>
+    </select>
 
     <button id="generate" class="primary">Generate</button>
 

@@ -172,8 +172,31 @@ def load_tasks():
 def fingerprint(req) -> str:
     """Same inputs + settings -> same id (texture on/off excluded: the shape is shared)."""
     import hashlib
-    key = {k: req.get(k) for k in ("mode", "prompt", "image", "images", "polycount", "steps", "seed")}
+    key = {k: req.get(k) for k in ("mode", "prompt", "image", "images", "polycount", "steps", "seed", "quality")}
     return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:24]
+
+
+# Shape quality presets: more diffusion steps + a finer 3D grid = sharper details (slower, more GPU memory).
+QUALITY = {
+    "fast":  {"steps": 20, "octree": 256, "chunks": 20000},
+    "high":  {"steps": 30, "octree": 384, "chunks": 20000},
+    "ultra": {"steps": 50, "octree": 512, "chunks": 8000},
+}
+
+
+def matte(mesh):
+    """Hunyuan's texture export leaves metallicFactor unset, and glTF treats unset as 100% metal, which makes skin and
+    cloth look washed-out and mirror-like in viewers and game engines. Make the material non-metallic."""
+    try:
+        v = getattr(mesh, "visual", None)
+        if getattr(v, "kind", None) == "texture" and getattr(v, "material", None) is not None:
+            pbr = v.material.to_pbr() if hasattr(v.material, "to_pbr") else v.material
+            pbr.metallicFactor = 0.0
+            pbr.roughnessFactor = 0.85
+            v.material = pbr
+    except Exception:
+        traceback.print_exc()
+    return mesh
 
 
 def set_stage(t, stage, progress):
@@ -195,7 +218,8 @@ def run(task_id: str):
             return engine.rembg()(img) if img.getextrema()[3][0] == 255 else img  # skip if already transparent
 
         gen = torch.manual_seed(int(req.get("seed") or 1234))
-        steps = int(req.get("steps") or 30)
+        q = QUALITY.get(req.get("quality") or "high", QUALITY["high"])
+        steps = int(req.get("steps") or q["steps"])
         fp = t["fp"]
         shape_file, cut_file = OUT / f"shape_{fp}.glb", OUT / f"cut_{fp}.png"
         mesh = None
@@ -229,13 +253,14 @@ def run(task_id: str):
                 image = views["front"]
                 # 2. geometry from all views
                 set_stage(t, f"Sculpting 3D shape from {len(views)} photos", 25)
-                mesh = engine.multiview()(image=views, num_inference_steps=steps, octree_resolution=380,
-                                          num_chunks=20000, generator=gen, output_type="trimesh")[0]
+                mesh = engine.multiview()(image=views, num_inference_steps=steps, octree_resolution=q["octree"],
+                                          num_chunks=q["chunks"], generator=gen, output_type="trimesh")[0]
             else:
                 image = cutout(image)
                 # 2. geometry
                 set_stage(t, "Sculpting 3D shape", 25)
-                mesh = engine.shape()(image=image, num_inference_steps=steps, octree_resolution=380, generator=gen)[0]
+                mesh = engine.shape()(image=image, num_inference_steps=steps, octree_resolution=q["octree"],
+                                      num_chunks=q["chunks"], generator=gen)[0]
 
             set_stage(t, "Cleaning mesh", 55)
             from hy3dgen.shapegen import FloaterRemover, DegenerateFaceRemover, FaceReducer
@@ -262,7 +287,7 @@ def run(task_id: str):
             warning = "Textures are not available on this server; the model is untextured."
 
         set_stage(t, "Saving", 95)
-        mesh.export(str(OUT / f"{task_id}.glb"))
+        matte(mesh).export(str(OUT / f"{task_id}.glb"))
         t.update(status="succeeded", progress=100, stage="Done", model_url=f"/models/{task_id}.glb",
                  thumbnail_url=f"/inputs/{task_id}.png", textured=warning is None and bool(req.get("texture", True)))
         if warning:
@@ -363,7 +388,7 @@ async def http_error(request: Request, exc: HTTPException):
 def health():
     import torch
     return {"ok": True, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "multiview": True, "mv_model": MV_MODEL,
+            "texture": engine.texture_available, "shape_model": SHAPE_MODEL, "multiview": True, "mv_model": MV_MODEL, "qualities": list(QUALITY),
             "queue": jobs.qsize(), "auth": bool(API_TOKEN), "version": 2}
 
 
@@ -376,7 +401,10 @@ async def generate(request: Request):
         bad(f"mode must be text, image or multiview (got {b.get('mode')!r})")
     req = {"mode": mode, "prompt": str(b.get("prompt") or "").strip(), "image": b.get("image"),
            "texture": to_bool(b.get("texture")), "polycount": to_int(b.get("polycount"), "polycount", 40000),
-           "steps": to_int(b.get("steps"), "steps", 30), "seed": to_int(b.get("seed"), "seed", None)}
+           "steps": to_int(b.get("steps"), "steps", None), "seed": to_int(b.get("seed"), "seed", None),
+           "quality": str(b.get("quality") or "high").lower()}
+    if req["quality"] not in QUALITY:
+        bad("quality must be fast, high or ultra")
     if mode == "text" and not req["prompt"]:
         bad("Type a prompt first")
     if mode == "image" and not (isinstance(req["image"], str) and req["image"]):

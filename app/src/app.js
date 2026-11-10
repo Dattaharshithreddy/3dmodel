@@ -82,7 +82,7 @@ const ENGINES = {
       if (req.mode === 'refine') throw new Error('Your server textures models directly — tick "Generate textures" and generate again.');
       const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(), native: false,
         json: { mode: req.mode, prompt: req.prompt, image: req.image, images: req.images, texture: req.texture,
-                polycount: req.polycount, seed: req.seed, fresh: !!req.seed } });
+                polycount: req.polycount, seed: req.seed, fresh: !!req.seed, quality: req.quality } });
       if (d.reused) toast(d.reused === 'running' ? 'Already being made — reconnected to it.' : 'Same photo & settings already done — showing it.');
       return d.task_id;
     },
@@ -177,7 +177,9 @@ const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 1000);
 camera.position.set(2.5, 1.6, 2.5);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+const envTex = scene.environment;
 const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(3, 5, 2); scene.add(sun);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x444455, 0); scene.add(hemi);
 const grid = new THREE.GridHelper(4, 20, 0x3a3f50, 0x222632); scene.add(grid);
 const resize = () => { const { clientWidth: w, clientHeight: h } = container; if (!w || !h) return; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); };
 new ResizeObserver(resize).observe(container); resize();
@@ -190,13 +192,49 @@ function frame(obj) {
   camera.near = size / 100; camera.far = size * 100; camera.updateProjectionMatrix();
   grid.position.y = box.min.y;
 }
+// AI-generated GLBs often omit metallicFactor, which glTF treats as 100% metal -> washed-out, mirror-like skin.
+function fixMaterials(obj) {
+  obj.traverse(o => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) {
+      if (m.isMeshStandardMaterial && !m.metalnessMap && m.metalness > 0.5) { m.metalness = 0; m.roughness = Math.max(m.roughness, 0.75); }
+    }
+  });
+}
+// Lighting modes: studio (default), soft (gentle, low contrast), flat (true texture colors, no lighting)
+const LIGHTS = ['studio', 'soft', 'flat'];
+let lightMode = 'studio';
+function realMaterials() {
+  state.model?.traverse(o => { if (o.isMesh && o.userData.realMat) { o.material = o.userData.realMat; delete o.userData.realMat; } });
+}
+function setLighting(mode) {
+  lightMode = mode;
+  realMaterials();
+  // No filmic tone mapping: it desaturates textures. Keep light levels moderate so colors match the texture.
+  renderer.toneMapping = THREE.NoToneMapping;
+  scene.environment = mode === 'flat' ? null : envTex;
+  sun.intensity = mode === 'studio' ? 1.1 : mode === 'soft' ? 0.25 : 0;
+  hemi.intensity = mode === 'soft' ? 1.4 : 0;
+  const env = mode === 'studio' ? 0.45 : 0.35;
+  state.model?.traverse(o => { if (o.isMesh) [].concat(o.material).forEach(m => { if ('envMapIntensity' in m) m.envMapIntensity = env; }); });
+  if (mode === 'flat') state.model?.traverse(o => {
+    if (!o.isMesh) return;
+    o.userData.realMat = o.material;
+    o.material = [].concat(o.material).map(m => new THREE.MeshBasicMaterial({ map: m.map || null, color: m.color ? m.color.clone() : 0xffffff, vertexColors: m.vertexColors, side: m.side, wireframe: wire }));
+    if (o.material.length === 1) o.material = o.material[0];
+  });
+  scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true); });
+  $('#light-btn').textContent = { studio: '☀', soft: '⛅', flat: '◐' }[mode];
+}
+
 function showModel(obj) {
-  if (state.model) scene.remove(state.model);
+  if (state.model) { realMaterials(); scene.remove(state.model); }
+  fixMaterials(obj);
   const box = new THREE.Box3().setFromObject(obj);
   obj.scale.multiplyScalar(2 / (box.getSize(new THREE.Vector3()).length() || 1));
   box.setFromObject(obj);
   obj.position.sub(box.getCenter(new THREE.Vector3())).add(new THREE.Vector3(0, box.getSize(new THREE.Vector3()).y / 2, 0));
-  state.model = obj; scene.add(obj); frame(obj); applyWire(); $('#empty').hidden = true;
+  state.model = obj; scene.add(obj); frame(obj); setLighting(lightMode); applyWire(); $('#empty').hidden = true;
   let tris = 0, verts = 0;
   obj.traverse(o => { if (o.isMesh) { const g = o.geometry; verts += g.attributes.position.count; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; } });
   $('#stats').innerHTML = `${Math.round(tris).toLocaleString()} triangles<br>${verts.toLocaleString()} vertices`;
@@ -209,6 +247,7 @@ document.querySelectorAll('.toolbar [data-act]').forEach(b => b.onclick = () => 
   if (a === 'wire') { wire = !wire; b.classList.toggle('on', wire); applyWire(); }
   if (a === 'grid') { grid.visible = !grid.visible; b.classList.toggle('on', grid.visible); }
   if (a === 'reset' && state.model) frame(state.model);
+  if (a === 'light') { setLighting(LIGHTS[(LIGHTS.indexOf(lightMode) + 1) % LIGHTS.length]); toast({ studio: 'Lighting: studio', soft: 'Lighting: soft', flat: 'Lighting: true colors (no shading)' }[lightMode]); }
 });
 
 // =============================================================== export / save
@@ -226,6 +265,7 @@ async function saveFile(data, name, mime) {
 }
 // Game-ready copy: real-world height in meters, pivot at the feet (bottom-center), chosen up-axis.
 function exportable() {
+  if (lightMode === 'flat') setLighting('studio');
   const root = new THREE.Group(), inner = new THREE.Group(), copy = state.model.clone(true);
   copy.position.set(0, 0, 0); copy.rotation.set(0, 0, 0); copy.scale.copy(state.model.scale);
   inner.add(copy); root.add(inner); root.updateMatrixWorld(true);
@@ -365,7 +405,7 @@ async function startJob(req, label) {
 $('#generate').onclick = () => {
   const provider = $('#provider').value;
   if (!provider) return openSettings();
-  const base = { provider, texture: $('#texture').checked, polycount: Number($('#poly').value) };
+  const base = { provider, texture: $('#texture').checked, polycount: Number($('#poly').value), quality: $('#quality').value };
   if (state.mode === 'text') {
     const prompt = $('#prompt').value.trim();
     if (!prompt) return showError('Type a prompt first.');
@@ -503,6 +543,7 @@ function reelPreview() {
 }
 $('#open-reel').onclick = () => {
   if (!state.model) return showError('Generate or open a model first, then make a reel.');
+  if (lightMode === 'flat') setLighting('studio');
   studio ||= new ReelStudio($('#reel-canvas'));
   if (!$('#r-title').value && state.current?.prompt) $('#r-title').value = state.current.prompt.slice(0, 40);
   $('#r-job').hidden = true; reelDlg.showModal(); reelPreview();
