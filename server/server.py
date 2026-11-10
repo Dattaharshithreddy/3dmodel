@@ -261,7 +261,7 @@ def make_2d(t, req, task_id):
         w = max(512, min(1536, round(src.width * scale / 64) * 64))
         h = max(512, min(1536, round(src.height * scale / 64) * 64))
         src = src.resize((w, h), Image.LANCZOS)
-    strength = min(0.95, max(0.15, float(req.get("strength") or 0.55)))
+    strength = min(0.95, max(0.15, float(req.get("strength") or 0.68)))
     total = max(1, int(steps * strength)) if src is not None else steps
     pipe = engine.art_pipe("redraw" if src is not None else "draw")
     set_stage(t, "Redrawing your photo" if src is not None else "Drawing", 15)
@@ -272,7 +272,7 @@ def make_2d(t, req, task_id):
 
     if src is not None:
         image = pipe(prompt=prompt, negative_prompt=negative, image=src, strength=strength, num_inference_steps=steps,
-                     guidance_scale=6.5, generator=gen, callback_on_step_end=on_step).images[0]
+                     guidance_scale=8.0, generator=gen, callback_on_step_end=on_step).images[0]
     else:
         image = pipe(prompt=prompt, negative_prompt=negative, width=w, height=h, num_inference_steps=steps,
                      guidance_scale=6.5, generator=gen, callback_on_step_end=on_step).images[0]
@@ -521,7 +521,7 @@ async def generate(request: Request):
         if req["aspect"] not in ART_SIZES:
             bad("aspect must be square, portrait or landscape")
         try:
-            req["strength"] = float(b.get("strength") or 0.55)
+            req["strength"] = float(b.get("strength") or 0.68)
         except (TypeError, ValueError):
             bad("strength must be a number between 0.15 and 0.95")
         if not isinstance(req["image"], str) or not req["image"]:

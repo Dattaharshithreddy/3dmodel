@@ -393,7 +393,11 @@ function renderArtPhoto() {
 $('#art-drop').onclick = () => artFile.click();
 $('#art-photo-clear').onclick = e => { e.stopPropagation(); state.artPhoto = null; renderArtPhoto(); };
 artFile.onchange = async () => {
-  try { state.artPhoto = await readImage(artFile.files[0]); renderArtPhoto(); } catch (e) { showError(e.message); }
+  try {
+    state.artPhoto = await readImage(artFile.files[0]); renderArtPhoto();
+    // "3D render" is the default style; redrawing a photo into it usually looks unchanged, so start from Cartoon.
+    if ($('#art-style').value === '3d') { $('#art-style').value = 'cartoon'; toast('Style set to Cartoon — change it if you want a different look.'); }
+  } catch (e) { showError(e.message); }
   artFile.value = '';
 };
 
