@@ -60,7 +60,7 @@ if [ -z "${CUDA_HOME:-}" ]; then
     fi
   fi
 fi
-export PATH="$CUDA_HOME/bin:$PATH"
+export PATH="$(dirname "$PY"):$CUDA_HOME/bin:$PATH"   # venv bin first so the build finds ninja
 # Compile only for this machine's GPU (faster; also works when no GPU is visible, e.g. T4 = 7.5)
 if [ -z "${TORCH_CUDA_ARCH_LIST:-}" ]; then
   CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')
