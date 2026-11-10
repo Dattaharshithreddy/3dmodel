@@ -50,10 +50,15 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 
 # ----------------------------------------------------------------------------- models (lazy)
 def _model_cached(repo, subfolder=None):
-    """hy3dgen downloads models into $HY3DGEN_MODELS (default ~/.cache/hy3dgen)/<repo>/<subfolder>."""
+    """True if the model is already on disk. hy3dgen first looks in $HY3DGEN_MODELS (default ~/.cache/hy3dgen) and
+    otherwise downloads into the Hugging Face cache (~/.cache/huggingface/hub/models--org--name/snapshots/<rev>/)."""
+    import glob
     base = os.path.expanduser(os.environ.get("HY3DGEN_MODELS", "~/.cache/hy3dgen"))
-    path = os.path.join(base, repo, subfolder or "")
-    return os.path.isdir(path) and any(os.scandir(path))
+    hub = os.environ.get("HF_HUB_CACHE") or os.path.join(
+        os.path.expanduser(os.environ.get("HF_HOME", "~/.cache/huggingface")), "hub")
+    candidates = [os.path.join(base, repo, subfolder or "")]
+    candidates += glob.glob(os.path.join(hub, "models--" + repo.replace("/", "--"), "snapshots", "*", subfolder or ""))
+    return any(os.path.isdir(c) and any(os.scandir(c)) for c in candidates)
 
 
 class Engine:
