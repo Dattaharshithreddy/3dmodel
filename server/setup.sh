@@ -14,25 +14,49 @@ if [ ! -d Hunyuan3D-2 ]; then git clone --depth 1 https://github.com/Tencent/Hun
 [ "${SKIP_TEXTURE:-0}" = "1" ] && { echo "Skipping textures (SKIP_TEXTURE=1)."; exit 0; }
 
 # ---- CUDA compiler for the texture rasterizer --------------------------------------------------------
+# NVIDIA's pip packages don't ship nvcc, so when no toolkit is present we install NVIDIA's official
+# "cuda-toolkit-12-X" package (compiler + headers only, never touches the GPU driver).
+install_cuda_toolkit() {
+  local TV MIN m v
+  TV=$("$PY" -c "import torch; print(torch.version.cuda or '')")
+  [ -z "$TV" ] && { echo "⚠️  PyTorch has no CUDA support — skipping textures."; return 1; }
+  [ "${TV%%.*}" = "12" ] || { echo "⚠️  Unsupported torch CUDA $TV — skipping textures."; return 1; }
+  MIN=${TV#*.}; MIN=${MIN%%.*}
+  echo "No CUDA toolkit found — installing NVIDIA CUDA toolkit 12.x (~4 GB, compiler only)…"
+  if command -v dnf >/dev/null; then
+    . /etc/os-release
+    case "$ID" in amzn) REPO=amzn2023 ;; *) REPO="rhel${VERSION_ID%%.*}" ;; esac
+    sudo curl -fsSL -o /etc/yum.repos.d/cuda-$REPO.repo \
+      "https://developer.download.nvidia.com/compute/cuda/repos/$REPO/x86_64/cuda-$REPO.repo" || return 1
+    sudo dnf -q makecache >/dev/null 2>&1 || true
+    for m in $(seq "$MIN" 9); do
+      if dnf -q list --available "cuda-toolkit-12-$m" >/dev/null 2>&1; then
+        sudo dnf install -y -q "cuda-toolkit-12-$m" && v="12.$m"; break
+      fi
+    done
+  elif command -v apt-get >/dev/null; then
+    . /etc/os-release
+    UBU="ubuntu${VERSION_ID//./}"
+    curl -fsSL -o /tmp/cuda-keyring.deb \
+      "https://developer.download.nvidia.com/compute/cuda/repos/$UBU/x86_64/cuda-keyring_1.1-1_all.deb" || return 1
+    sudo dpkg -i /tmp/cuda-keyring.deb >/dev/null && sudo apt-get update -qq
+    for m in $(seq "$MIN" 9); do
+      if apt-cache show "cuda-toolkit-12-$m" >/dev/null 2>&1; then
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "cuda-toolkit-12-$m" && v="12.$m"; break
+      fi
+    done
+  fi
+  [ -n "${v:-}" ] && [ -x "/usr/local/cuda-$v/bin/nvcc" ] || { echo "⚠️  Could not install the CUDA toolkit."; return 1; }
+  export CUDA_HOME="/usr/local/cuda-$v"
+}
 if [ -z "${CUDA_HOME:-}" ]; then
-  if command -v nvcc >/dev/null; then export CUDA_HOME="$(dirname "$(dirname "$(command -v nvcc)")")"
+  if command -v nvcc >/dev/null; then export CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
   elif [ -x /usr/local/cuda/bin/nvcc ]; then export CUDA_HOME=/usr/local/cuda
   else
-    TV=$("$PY" -c "import torch; print(torch.version.cuda or '')")
-    if [ -z "$TV" ]; then echo "⚠️  PyTorch has no CUDA support — skipping textures."; exit 0; fi
-    echo "No CUDA toolkit found — installing NVIDIA's nvcc $TV from pip…"
-    "$PY" -m pip install -q "nvidia-cuda-nvcc-cu12==${TV}.*" "nvidia-cuda-runtime-cu12==${TV}.*" "nvidia-cuda-cccl-cu12==${TV}.*" || true
-    NV=$("$PY" -c "import nvidia, os; print(list(nvidia.__path__)[0])")
-    CH="$(cd "$(dirname "$PY")/.." && pwd)/cuda_home"
-    rm -rf "$CH"; mkdir -p "$CH/include" "$CH/lib64"
-    ln -s "$NV/cuda_nvcc/bin" "$CH/bin"
-    [ -d "$NV/cuda_nvcc/nvvm" ] && ln -s "$NV/cuda_nvcc/nvvm" "$CH/nvvm"
-    for d in "$NV/cuda_runtime/include" "$NV/cuda_nvcc/include" "$NV/cuda_cccl/include"; do
-      [ -d "$d" ] && for f in "$d"/*; do ln -sfn "$f" "$CH/include/$(basename "$f")"; done
-    done
-    for f in "$NV"/cuda_runtime/lib/*; do ln -sf "$f" "$CH/lib64/"; done
-    [ -e "$CH/lib64/libcudart.so" ] || ln -s "$CH/lib64/libcudart.so.12" "$CH/lib64/libcudart.so"
-    export CUDA_HOME="$CH"
+    found=""; for d in /usr/local/cuda-12.*; do [ -x "$d/bin/nvcc" ] && found="$d"; done
+    if [ -n "$found" ]; then export CUDA_HOME="$found"
+    else install_cuda_toolkit || { echo "⚠️  Textures disabled — the server will make grey models. Shapes work normally."; exit 0; }
+    fi
   fi
 fi
 export PATH="$CUDA_HOME/bin:$PATH"
