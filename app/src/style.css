@@ -108,3 +108,5 @@ details label { margin-top: 8px; }
 .view .clear { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; border: 0; background: #000a; color: #fff; font-size: 11px; }
 .view.has::after { content: attr(data-label); position: absolute; left: 6px; bottom: 6px; background: #000b; color: #fff;
   font-size: 11px; padding: 2px 8px; border-radius: 99px; }
+
+.error.note { color: var(--accent2); }

@@ -81,12 +81,14 @@ const ENGINES = {
     async create(req) {
       if (req.mode === 'refine') throw new Error('Your server textures models directly — tick "Generate textures" and generate again.');
       const d = await http(`${serverBase()}/generate`, { method: 'POST', headers: authH(), native: false,
-        json: { mode: req.mode, prompt: req.prompt, image: req.image, images: req.images, texture: req.texture, polycount: req.polycount } });
+        json: { mode: req.mode, prompt: req.prompt, image: req.image, images: req.images, texture: req.texture,
+                polycount: req.polycount, seed: req.seed, fresh: !!req.seed } });
+      if (d.reused) toast(d.reused === 'running' ? 'Already being made — reconnected to it.' : 'Same photo & settings already done — showing it.');
       return d.task_id;
     },
     async status(id) {
       const d = await http(`${serverBase()}/status/${id}`, { headers: authH(), native: false });
-      return { status: d.status, progress: d.progress, stage: d.stage, error: d.error,
+      return { status: d.status, progress: d.progress, stage: d.stage, error: d.error, warning: d.warning,
         modelUrl: d.model_url && serverBase() + d.model_url, thumbnail: d.thumbnail_url && serverBase() + d.thumbnail_url };
     },
     headers: authH,
@@ -344,10 +346,13 @@ viewFile.onchange = async () => {
 };
 
 // =============================================================== generation
-const showError = msg => { $('#error').textContent = msg || ''; $('#error').hidden = !msg; };
+const showError = msg => { $('#error').textContent = msg || ''; $('#error').hidden = !msg; $('#error').classList.remove('note'); };
+const toast = msg => { $('#error').textContent = msg; $('#error').hidden = false; $('#error').classList.add('note'); };
 
 async function startJob(req, label) {
-  showError(''); $('#generate').disabled = true; $('#refine').hidden = true;
+  showError(''); $('#generate').disabled = true; $('#refine').hidden = true; $('#variant').hidden = true;
+  state.lastReq = { req, label };
+  try { localStorage.setItem('model-forge-lastreq', JSON.stringify(state.lastReq)); } catch {}
   $('#job').hidden = false; $('#job-pct').textContent = ''; $('#job-bar').style.width = '0%';
   $('#job-status').textContent = req.image || req.images ? 'Uploading photo…' : 'Sending…';
   try {
@@ -388,13 +393,20 @@ function poll(job) {
       $('#job-status').textContent = s.stage || { queued: 'Queued…', running: 'Generating…', succeeded: 'Done', failed: 'Failed' }[s.status] || s.status;
       $('#job-pct').textContent = `${Math.round(s.progress || 0)}%`; $('#job-bar').style.width = `${s.progress || 0}%`;
       if (s.status === 'succeeded') {
-        Object.assign(job, { status: 'succeeded', modelUrl: s.modelUrl, demo: s.demo, canRefine: s.canRefine, thumb: job.thumb || s.thumbnail });
-        saveHistory(job); $('#generate').disabled = false; openJob(job); return;
+        Object.assign(job, { status: 'succeeded', modelUrl: s.modelUrl, demo: s.demo, canRefine: s.canRefine, thumb: job.thumb || s.thumbnail, warning: s.warning });
+        saveHistory(job); $('#generate').disabled = false; await openJob(job);
+        if (s.warning) toast(s.warning);
+        $('#variant').hidden = !(state.lastReq && job.provider === 'server');
+        return;
       }
       if (s.status === 'failed') { job.status = 'failed'; saveHistory(job); $('#generate').disabled = false; return showError(s.error || 'Generation failed'); }
     } catch (e) {
       // The server keeps working even if the phone loses connection, so keep checking for ~10 minutes.
       failures++;
+      if (/^HTTP 404/.test(e.message)) {
+        job.status = 'failed'; saveHistory(job); $('#generate').disabled = false;
+        return showError('The server no longer has this job (it was restarted). Tap Generate again — finished steps are reused.');
+      }
       if (failures >= 120 || /^HTTP 4\d\d/.test(e.message)) {
         $('#generate').disabled = false;
         return showError(e.message + ' — the server may still finish it: tap the model under "My models" to check again.');
@@ -512,4 +524,16 @@ $('#r-record').onclick = async () => {
   recording = false; $('#r-record').disabled = $('#r-close').disabled = false; reelPreview();
 };
 
+$('#variant').onclick = () => {
+  if (!state.lastReq) return;
+  const { req, label } = state.lastReq;
+  startJob({ ...req, seed: Math.floor(Math.random() * 1e9) + 1 }, label + ' (v2)');
+};
+
 renderEngines(); renderHistory();
+// Resume: if a model was still being made when the app closed, pick it up again automatically.
+try { state.lastReq = JSON.parse(localStorage.getItem('model-forge-lastreq')) || null; } catch {}
+{
+  const pending = getHistory().find(j => (j.status === 'queued' || j.status === 'running') && ENGINES[j.provider]?.ready());
+  if (pending && Date.now() - pending.created < 2 * 3600e3) { $('#generate').disabled = true; poll(pending); }
+}

@@ -126,10 +126,43 @@ class Engine:
 engine = Engine()
 tasks: dict[str, dict] = {}
 jobs: "queue.Queue[str]" = queue.Queue()
+TASKS_FILE = OUT / "tasks.json"
+_save_lock = threading.Lock()
+
+
+def save_tasks():
+    """Keep job status on disk so finished models survive a server restart."""
+    with _save_lock:
+        data = {k: {kk: vv for kk, vv in v.items() if kk != "req"} for k, v in tasks.items()}
+        tmp = TASKS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data))
+        tmp.replace(TASKS_FILE)
+
+
+def load_tasks():
+    if not TASKS_FILE.exists():
+        return
+    try:
+        data = json.loads(TASKS_FILE.read_text())
+    except Exception:
+        return
+    for k, v in data.items():
+        if v.get("status") in ("queued", "running"):
+            v.update(status="failed", error="The server restarted while working on this. Tap Generate again — "
+                                            "finished steps (the 3D shape) are reused, so it continues faster.")
+        tasks[k] = v
+
+
+def fingerprint(req) -> str:
+    """Same inputs + settings -> same id (texture on/off excluded: the shape is shared)."""
+    import hashlib
+    key = {k: req.get(k) for k in ("mode", "prompt", "image", "images", "polycount", "steps", "seed")}
+    return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:24]
 
 
 def set_stage(t, stage, progress):
     t.update(stage=stage, progress=progress, status="running")
+    save_tasks()
 
 
 def run(task_id: str):
@@ -146,57 +179,82 @@ def run(task_id: str):
 
         gen = torch.manual_seed(int(req.get("seed") or 1234))
         steps = int(req.get("steps") or 30)
+        fp = t["fp"]
+        shape_file, cut_file = OUT / f"shape_{fp}.glb", OUT / f"cut_{fp}.png"
+        mesh = None
+        if shape_file.exists() and cut_file.exists():
+            # Resume: the 3D shape for exactly these inputs was already made -> skip straight to textures.
+            set_stage(t, "Reusing the finished 3D shape", 55)
+            import trimesh
+            mesh = trimesh.load(str(shape_file), force="mesh")
+            image = Image.open(cut_file)
+            Image.open(cut_file).save(OUT / f"{task_id}_input.png")
 
-        # 1. input image(s)
-        if req["mode"] == "text":
-            set_stage(t, "Imagining the object (text → image)", 5)
-            prompt = req["prompt"].strip() + ", single object, centered, white background, 3D render, full view"
-            image = engine.t2i()(prompt)
-            if LOW_VRAM:
-                engine._t2i = None
-                torch.cuda.empty_cache()
-        elif req["mode"] == "multiview":
-            views = {k: decode(v) for k, v in (req.get("images") or {}).items() if k in MV_VIEWS and v}
-            image = views["front"]
-        else:
-            image = decode(req["image"])
-        image.save(OUT / f"{task_id}_input.png")
+        if mesh is None:
+            # 1. input image(s)
+            if req["mode"] == "text":
+                set_stage(t, "Imagining the object (text → image)", 5)
+                prompt = req["prompt"].strip() + ", single object, centered, white background, 3D render, full view"
+                image = engine.t2i()(prompt)
+                if LOW_VRAM:
+                    engine._t2i = None
+                    torch.cuda.empty_cache()
+            elif req["mode"] == "multiview":
+                views = {k: decode(v) for k, v in (req.get("images") or {}).items() if k in MV_VIEWS and v}
+                image = views["front"]
+            else:
+                image = decode(req["image"])
+            image.save(OUT / f"{task_id}_input.png")
 
-        set_stage(t, "Removing background", 15)
-        if req["mode"] == "multiview":
-            views = {k: cutout(v) for k, v in views.items()}
-            image = views["front"]
-            # 2. geometry from all views
-            set_stage(t, f"Sculpting 3D shape from {len(views)} photos", 25)
-            mesh = engine.multiview()(image=views, num_inference_steps=steps, octree_resolution=380,
-                                      num_chunks=20000, generator=gen, output_type="trimesh")[0]
-        else:
-            image = cutout(image)
-            # 2. geometry
-            set_stage(t, "Sculpting 3D shape", 25)
-            mesh = engine.shape()(image=image, num_inference_steps=steps, octree_resolution=380, generator=gen)[0]
+            set_stage(t, "Removing background", 15)
+            if req["mode"] == "multiview":
+                views = {k: cutout(v) for k, v in views.items()}
+                image = views["front"]
+                # 2. geometry from all views
+                set_stage(t, f"Sculpting 3D shape from {len(views)} photos", 25)
+                mesh = engine.multiview()(image=views, num_inference_steps=steps, octree_resolution=380,
+                                          num_chunks=20000, generator=gen, output_type="trimesh")[0]
+            else:
+                image = cutout(image)
+                # 2. geometry
+                set_stage(t, "Sculpting 3D shape", 25)
+                mesh = engine.shape()(image=image, num_inference_steps=steps, octree_resolution=380, generator=gen)[0]
 
-        set_stage(t, "Cleaning mesh", 55)
-        from hy3dgen.shapegen import FloaterRemover, DegenerateFaceRemover, FaceReducer
-        mesh = FloaterRemover()(mesh)
-        mesh = DegenerateFaceRemover()(mesh)
-        mesh = FaceReducer()(mesh, max_facenum=int(req.get("polycount") or 40000))
+            set_stage(t, "Cleaning mesh", 55)
+            from hy3dgen.shapegen import FloaterRemover, DegenerateFaceRemover, FaceReducer
+            mesh = FloaterRemover()(mesh)
+            mesh = DegenerateFaceRemover()(mesh)
+            mesh = FaceReducer()(mesh, max_facenum=int(req.get("polycount") or 40000))
 
-        # 3. texture
+            # save the finished shape + cut-out photo so a retry can resume from here
+            mesh.export(str(shape_file))
+            image.save(cut_file)
+
+        # 3. texture (if it fails, still deliver the grey shape instead of losing the whole job)
+        warning = None
         if req.get("texture", True) and engine.texture_available:
             set_stage(t, "Painting textures", 65)
             engine.park_shape_models()
-            mesh = engine.paint()(mesh, image=image)
+            try:
+                mesh = engine.paint()(mesh, image=image)
+            except Exception as e:
+                traceback.print_exc()
+                warning = f"Textures failed ({str(e)[:200]}); here is the untextured shape. Tap Generate to retry — the shape is reused."
+        elif req.get("texture", True):
+            warning = "Textures are not available on this server; the model is untextured."
 
         set_stage(t, "Saving", 95)
         mesh.export(str(OUT / f"{task_id}.glb"))
         t.update(status="succeeded", progress=100, stage="Done", model_url=f"/models/{task_id}.glb",
-                 thumbnail_url=f"/inputs/{task_id}.png")
+                 thumbnail_url=f"/inputs/{task_id}.png", textured=warning is None and bool(req.get("texture", True)))
+        if warning:
+            t["warning"] = warning
     except Exception as e:
         traceback.print_exc()
         t.update(status="failed", error=str(e)[:500])
     finally:
         t.pop("req", None)
+        save_tasks()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -208,6 +266,7 @@ def worker():
             run(tid)
 
 
+load_tasks()
 threading.Thread(target=worker, daemon=True).start()
 
 # ----------------------------------------------------------------------------- API
@@ -310,8 +369,21 @@ async def generate(request: Request):
         if "front" not in imgs:
             bad("Multi-view needs at least a front photo")
         req["images"] = imgs
+    fp = fingerprint(req)
+    key = f"{fp}:{int(req['texture'])}"
+    if not b.get("fresh"):
+        for old_id, old in sorted(tasks.items(), key=lambda kv: -kv[1].get("created", 0)):
+            if old.get("key") != key:
+                continue
+            if old["status"] in ("queued", "running"):
+                return {"task_id": old_id, "reused": "running"}      # reconnect instead of queueing a duplicate
+            if old["status"] == "succeeded" and (OUT / f"{old_id}.glb").exists() and old.get("textured", True) == req["texture"]:
+                return {"task_id": old_id, "reused": "finished"}     # same inputs already done -> instant result
+            break
     tid = uuid.uuid4().hex[:24]  # 96 random bits: download links are shareable
-    tasks[tid] = {"status": "queued", "progress": 0, "stage": "Waiting in queue", "created": time.time(), "req": req}
+    tasks[tid] = {"status": "queued", "progress": 0, "stage": "Waiting in queue", "created": time.time(),
+                  "req": req, "fp": fp, "key": key}
+    save_tasks()
     jobs.put(tid)
     return {"task_id": tid}
 
@@ -321,7 +393,7 @@ def status(tid: str):
     t = tasks.get(tid)
     if not t:
         raise HTTPException(404, "unknown task")
-    return {k: v for k, v in t.items() if k != "req"}
+    return {k: v for k, v in t.items() if k not in ("req", "fp", "key")}
 
 
 @app.get("/models/{name}")
