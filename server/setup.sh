@@ -29,10 +29,11 @@ install_cuda_toolkit() {
     sudo curl -fsSL -o /etc/yum.repos.d/cuda-$REPO.repo \
       "https://developer.download.nvidia.com/compute/cuda/repos/$REPO/x86_64/cuda-$REPO.repo" || return 1
     sudo dnf -q makecache >/dev/null 2>&1 || true
-    for m in $(seq "$MIN" 9); do
-      if dnf -q list --available "cuda-toolkit-12-$m" >/dev/null 2>&1; then
-        sudo dnf install -y -q "cuda-toolkit-12-$m" && v="12.$m"; break
-      fi
+    # versions NVIDIA offers for this OS, e.g. "12-8 12-9"; prefer the one closest to (and not below) torch's
+    AVAIL=$(sudo dnf -q list --available 'cuda-toolkit-12-*' 2>/dev/null | grep -oE '^cuda-toolkit-12-[0-9]+\.' | grep -oE '12-[0-9]+' | sort -t- -k2 -n -u)
+    echo "CUDA toolkits available: ${AVAIL:-none}"
+    for m in $(echo "$AVAIL" | cut -d- -f2); do
+      if [ "$m" -ge "$MIN" ]; then sudo dnf install -y "cuda-toolkit-12-$m" && v="12.$m"; break; fi
     done
   elif command -v apt-get >/dev/null; then
     . /etc/os-release
@@ -40,7 +41,7 @@ install_cuda_toolkit() {
     curl -fsSL -o /tmp/cuda-keyring.deb \
       "https://developer.download.nvidia.com/compute/cuda/repos/$UBU/x86_64/cuda-keyring_1.1-1_all.deb" || return 1
     sudo dpkg -i /tmp/cuda-keyring.deb >/dev/null && sudo apt-get update -qq
-    for m in $(seq "$MIN" 9); do
+    for m in $(seq "$MIN" 12); do
       if apt-cache show "cuda-toolkit-12-$m" >/dev/null 2>&1; then
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "cuda-toolkit-12-$m" && v="12.$m"; break
       fi

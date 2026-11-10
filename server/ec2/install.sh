@@ -4,6 +4,10 @@
 # Usage (on the instance):
 #   git clone https://github.com/Dattaharshithreddy/3dmodel && bash 3dmodel/server/ec2/install.sh
 set -euo pipefail
+LOG="$HOME/modelforge-install.log"
+exec > >(tee -a "$LOG") 2>&1          # full log for troubleshooting
+trap 'echo; echo "❌ Install stopped at line $LINENO (exit $?). Full log: $LOG"' ERR
+echo "===== Model Forge install $(date) ====="
 SERVER_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SERVER_DIR"
 
