@@ -46,9 +46,17 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 
 
 # ----------------------------------------------------------------------------- models (lazy)
+def _model_cached(repo, subfolder=None):
+    """hy3dgen downloads models into $HY3DGEN_MODELS (default ~/.cache/hy3dgen)/<repo>/<subfolder>."""
+    base = os.path.expanduser(os.environ.get("HY3DGEN_MODELS", "~/.cache/hy3dgen"))
+    path = os.path.join(base, repo, subfolder or "")
+    return os.path.isdir(path) and any(os.scandir(path))
+
+
 class Engine:
     def __init__(self):
         self.lock = threading.Lock()
+        self.on_status = lambda msg: None   # set per job: shows "Downloading…" in the app
         self._shape = self._mv = self._paint = self._t2i = self._rembg = None
         try:  # textures need the compiled CUDA rasterizer (its kernel links against torch: import torch first)
             import torch  # noqa: F401
@@ -71,6 +79,9 @@ class Engine:
         if self._mv is None:
             self._free("_shape")  # on small GPUs keep only one shape model in memory
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+            self._free("_paint")
+            if not _model_cached(MV_MODEL, MV_SUBFOLDER):
+                self.on_status("Downloading multi-view AI model (first time only, ~5–10 min)")
             self._mv = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
                 MV_MODEL, subfolder=MV_SUBFOLDER, use_safetensors=True)
         return self._on_gpu(self._mv)
@@ -78,7 +89,10 @@ class Engine:
     def shape(self):
         if self._shape is None:
             self._free("_mv")
+            self._free("_paint")
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+            if not _model_cached(SHAPE_MODEL, SHAPE_SUBFOLDER):
+                self.on_status("Downloading 3D shape AI model (first time only, ~5 min)")
             self._shape = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
                 SHAPE_MODEL, subfolder=SHAPE_SUBFOLDER, use_safetensors=True)
         return self._on_gpu(self._shape)
@@ -105,6 +119,8 @@ class Engine:
     def paint(self):
         if self._paint is None:
             from hy3dgen.texgen import Hunyuan3DPaintPipeline
+            if not _model_cached(TEXTURE_MODEL, "hunyuan3d-paint-v2-0"):
+                self.on_status("Downloading texture AI models (first time only, ~5–10 min)")
             self._paint = Hunyuan3DPaintPipeline.from_pretrained(TEXTURE_MODEL)
             if LOW_VRAM and hasattr(self._paint, "enable_model_cpu_offload"):
                 self._paint.enable_model_cpu_offload()
@@ -169,6 +185,7 @@ def run(task_id: str):
     import torch
     t = tasks[task_id]
     req = t["req"]
+    engine.on_status = lambda msg: (t.update(stage=msg), save_tasks())
     try:
         def decode(data_url):
             return Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[-1])))
@@ -237,6 +254,7 @@ def run(task_id: str):
             engine.park_shape_models()
             try:
                 mesh = engine.paint()(mesh, image=image)
+                engine._free("_paint")   # LOW_VRAM: free RAM for the next job's shape model (reload takes ~1 min)
             except Exception as e:
                 traceback.print_exc()
                 warning = f"Textures failed ({str(e)[:200]}); here is the untextured shape. Tap Generate to retry — the shape is reused."
