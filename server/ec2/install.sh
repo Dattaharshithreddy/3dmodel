@@ -38,15 +38,30 @@ if [ "$RAM_GB" -lt 30 ] && [ "$SWAP_GB" -lt 16 ] && [ ! -f /swapfile ]; then
   fi
 fi
 
-echo "== Choosing Python"
-if [ -x /opt/pytorch/bin/python ]; then PY=/opt/pytorch/bin/python          # Deep Learning AMI (2024+)
-elif [ -x /opt/conda/envs/pytorch/bin/python ]; then PY=/opt/conda/envs/pytorch/bin/python
-else PY=$(command -v python3); fi
+echo "== Python environment (separate from any other app on this machine)"
+if [ -x /opt/pytorch/bin/python ]; then
+  PY=/opt/pytorch/bin/python                       # AWS Deep Learning AMI: ready-made CUDA PyTorch
+else
+  BASE=""
+  for c in /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.10 /usr/local/bin/python3.12 /usr/local/bin/python3.11 /usr/local/bin/python3.10; do
+    [ -x "$c" ] && { BASE="$c"; break; }
+  done
+  if [ -z "$BASE" ]; then
+    if command -v dnf >/dev/null; then sudo dnf install -y -q python3.11 python3.11-devel python3.11-pip >/dev/null; BASE=/usr/bin/python3.11
+    else sudo apt-get install -y -qq python3-venv python3-dev >/dev/null; BASE=$(command -v python3); fi
+  fi
+  if command -v dnf >/dev/null; then sudo dnf install -y -q "$(basename "$BASE")-devel" >/dev/null 2>&1 || true; fi
+  VENV="$HOME/modelforge-venv"
+  [ -x "$VENV/bin/python" ] || "$BASE" -m venv "$VENV"
+  PY="$VENV/bin/python"
+  "$PY" -m pip install -q --upgrade pip setuptools wheel
+fi
 echo "Using $PY"
 if ! "$PY" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
-  echo "Installing CUDA PyTorch…"
-  "$PY" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+  echo "Installing CUDA PyTorch (~3 GB)…"
+  "$PY" -m pip install -q torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 fi
+"$PY" -m pip install -q pybind11 ninja
 
 echo "== Installing Hunyuan3D-2 + server (10–20 min)"
 PYTHON="$PY" bash ./setup.sh

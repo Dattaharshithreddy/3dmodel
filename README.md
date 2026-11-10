@@ -93,4 +93,4 @@ cd app && npm run apk                        # build an APK locally (needs Andro
 CI signs the APK with the committed `app/android/app/debug.keystore` (public, for sideloading only). Before publishing on Google Play, create your own release keystore, keep it **out of git**, and add it to the workflow as repository secrets.
 
 ## License notes
-Hunyuan3D-2 is under the Tencent Hunyuan Community License. Read it before any commercial use; it restricts use in some regions (EU, UK, South Korea).
+Hunyuan3D-2's code and model weights are released by Tencent under the **Tencent Hunyuan 3D 2.0 Community License**, and parts of its source are marked *non-commercial*. The license also excludes the EU, UK and South Korea. **Read the license (`server/Hunyuan3D-2/LICENSE`) before selling games, assets or videos made with it.** For guaranteed commercial rights, use a paid engine (Meshy or Tripo) through the app's Settings.

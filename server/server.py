@@ -50,7 +50,8 @@ class Engine:
     def __init__(self):
         self.lock = threading.Lock()
         self._shape = self._mv = self._paint = self._t2i = self._rembg = None
-        try:
+        try:  # textures need the compiled CUDA rasterizer
+            import custom_rasterizer  # noqa: F401
             import hy3dgen.texgen  # noqa: F401
             default_tex = "1"
         except Exception:
