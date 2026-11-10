@@ -198,7 +198,8 @@ app = FastAPI(title="Model Forge AI server")
 
 @app.middleware("http")
 async def auth(request: Request, call_next):
-    if API_TOKEN and request.method != "OPTIONS" and request.url.path not in ("/health",):
+    if API_TOKEN and request.method != "OPTIONS" and request.url.path != "/health" \
+            and not request.url.path.startswith(("/models/", "/inputs/")):  # unguessable ids act as share links
         if request.headers.get("authorization") != f"Bearer {API_TOKEN}":
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -291,7 +292,7 @@ async def generate(request: Request):
         if "front" not in imgs:
             bad("Multi-view needs at least a front photo")
         req["images"] = imgs
-    tid = uuid.uuid4().hex[:12]
+    tid = uuid.uuid4().hex[:24]  # 96 random bits: download links are shareable
     tasks[tid] = {"status": "queued", "progress": 0, "stage": "Waiting in queue", "created": time.time(), "req": req}
     jobs.put(tid)
     return {"task_id": tid}

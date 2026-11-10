@@ -7,6 +7,7 @@ Your own AI 3D model generator, similar to Meshy and Tripo. Type a description o
 | 📱 Android app | [`app/`](app) | The app you install on your phone (built from HTML/JS with Capacitor) |
 | 🧠 AI engine | [`server/`](server) | Your own generation server. Runs Tencent's open-source **Hunyuan3D-2** models on a GPU |
 | ☁️ Free GPU | [`colab/`](colab) | A notebook that runs the AI engine on Google Colab's free GPU |
+| 🤖 Claude MCP | [`mcp/`](mcp) | Lets Claude make 3D models from your photos directly (see [mcp/README.md](mcp/README.md)) |
 
 ## How it works
 ```

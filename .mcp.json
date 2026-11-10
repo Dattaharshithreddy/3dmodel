@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "model-forge": {
+      "command": "bash",
+      "args": ["mcp/run.sh"],
+      "env": {
+        "MODELFORGE_URL": "${MODELFORGE_URL:-}",
+        "MODELFORGE_TOKEN": "${MODELFORGE_TOKEN:-}",
+        "MODELFORGE_OUTPUT_DIR": "${MODELFORGE_OUTPUT_DIR:-models}"
+      }
+    }
+  }
+}

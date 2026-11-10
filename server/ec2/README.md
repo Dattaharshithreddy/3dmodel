@@ -9,17 +9,22 @@ In the AWS console, go to **EC2 → Launch instance**:
 | Instance type | **g5.xlarge** (A10G, 24 GB, recommended, ~$1/hour) or **g4dn.xlarge** (T4, 16 GB, cheaper, ~$0.53/hour, slower textures) |
 | Storage | **100 GB** gp3 (the AI models are ~15–25 GB) |
 | Key pair | Create or pick one so you can SSH in |
-| Security group | Allow **SSH (22)** from *My IP*, and **Custom TCP 8000** from *Anywhere* (so your phone can connect) |
+| Security group | Allow **SSH (22)** from *My IP*, and **HTTP (80)**, **HTTPS (443)** and **Custom TCP 8000** from *Anywhere* (80/443 give you a secure https link; 8000 is the plain fallback) |
 
 > ⚠️ Ordinary instance types (t2/t3/m5/c5, free tier) have **no GPU** and won't work.
 > New AWS accounts often have a GPU quota of **0**. If launch fails with *"You have requested more vCPU capacity than your current vCPU limit"*, go to **Service Quotas → EC2 → "Running On-Demand G and VT instances"**, request **8**, and wait for approval (usually hours).
 
 ## 2. Install (one command)
-SSH in (`ssh -i your-key.pem ubuntu@<public-ip>`), then run:
+Connect with **EC2 Instance Connect** (in the console) or SSH, check the GPU with `nvidia-smi`, then run:
+```bash
+command -v git || sudo dnf install -y git || sudo apt-get install -y git
+```
 ```bash
 git clone https://github.com/Dattaharshithreddy/3dmodel && bash 3dmodel/server/ec2/install.sh
 ```
-It checks the GPU, installs Hunyuan3D-2 and the server, sets it to start automatically on boot, and finally prints the **URL** and **token** to enter in the app.
+It works on Amazon Linux 2023 and Ubuntu. It installs Hunyuan3D-2, the server, the **MCP server for Claude**, and a free **HTTPS** certificate (via `<ip>.sslip.io`), and sets everything to start automatically on boot. At the end it prints the **app URL and token** and the **Claude connector URL**.
+
+If `nvidia-smi` says "command not found", the instance has no NVIDIA driver. Launch it again with the *Deep Learning OSS Nvidia Driver AMI GPU PyTorch* image.
 
 ## 3. Connect the app
 In **⚙ Settings**, paste the URL (`http://<public-ip>:8000`) and the token, tap **Test connection**, then **Save**.
