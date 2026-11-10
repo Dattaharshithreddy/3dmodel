@@ -61,9 +61,10 @@ else
   "$PY" -m pip install -q --upgrade pip setuptools wheel
 fi
 echo "Using $PY"
-if ! "$PY" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
-  echo "Installing CUDA PyTorch (~3 GB)…"
-  "$PY" -m pip install -q torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+# Current diffusers/transformers need torch >= 2.6 (torch.accelerator). cu126 builds support the T4 (sm_75) and newer.
+if ! "$PY" -c "import torch, sys; v=tuple(int(x) for x in torch.__version__.split('+')[0].split('.')[:2]); sys.exit(0 if torch.cuda.is_available() and v >= (2, 6) else 1)" 2>/dev/null; then
+  echo "Installing CUDA PyTorch 2.7 (~3 GB)…"
+  "$PY" -m pip install -q torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu126
 fi
 "$PY" -m pip install -q pybind11 ninja
 
