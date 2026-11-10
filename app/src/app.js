@@ -42,6 +42,7 @@ function errText(status, d) {
 const isNetErr = e => e instanceof TypeError || /failed to fetch|load failed|network|unable to resolve|timed? ?out|connect|refused|ssl|host/i.test(e.message || '');
 async function http(url, opts = {}) {
   try {
+    if (opts.native === false && NATIVE && /^http:\/\//i.test(url)) return await httpOnce(url, { ...opts, native: true });
     if (opts.native === false && NATIVE) {
       // WebView fetch first; if it fails at the network/CORS level, retry natively to get the real status.
       try { return await httpOnce(url, opts); }
@@ -298,8 +299,16 @@ function readImage(f) {
     img.onload = () => {
       const s = Math.min(1, 1024 / Math.max(img.width, img.height)), c = document.createElement('canvas');
       c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(url); resolve(c.toDataURL('image/png'));
+      const g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      // JPEG is ~5x smaller than PNG for photos -> fast, reliable uploads on mobile data.
+      // Keep PNG only when the image actually has transparent pixels (e.g. a cut-out product shot).
+      let transparent = false;
+      if (f.type === 'image/png' || f.type === 'image/webp') {
+        const a = g.getImageData(0, 0, c.width, c.height).data;
+        for (let i = 3; i < a.length; i += 16) if (a[i] < 250) { transparent = true; break; }
+      }
+      resolve(transparent ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.9));
     };
     img.onerror = () => reject(new Error('Could not read that image.'));
     img.src = url;
@@ -339,12 +348,14 @@ const showError = msg => { $('#error').textContent = msg || ''; $('#error').hidd
 
 async function startJob(req, label) {
   showError(''); $('#generate').disabled = true; $('#refine').hidden = true;
+  $('#job').hidden = false; $('#job-pct').textContent = ''; $('#job-bar').style.width = '0%';
+  $('#job-status').textContent = req.image || req.images ? 'Uploading photo…' : 'Sending…';
   try {
     const id = await ENGINES[req.provider].create(req);
     const job = { id, provider: req.provider, prompt: label, mode: req.mode, created: Date.now(), status: 'queued',
       thumb: req.mode === 'image' ? await tinyThumb(req.image) : req.mode === 'multiview' ? await tinyThumb(req.images.front) : null };
     saveHistory(job); poll(job);
-  } catch (e) { showError(e.message); $('#generate').disabled = false; }
+  } catch (e) { showError(e.message); $('#generate').disabled = false; $('#job').hidden = true; }
 }
 $('#generate').onclick = () => {
   const provider = $('#provider').value;
