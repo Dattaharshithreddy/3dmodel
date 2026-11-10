@@ -51,7 +51,7 @@ async function http(url, opts = {}) {
     return await httpOnce(url, opts);
   } catch (e) {
     if (!/^HTTP \d/.test(e.message) && isNetErr(e))
-      throw new Error(`Can't reach ${new URL(url).host} (${e.message}). Check that the Colab notebook is still running and that Settings has its latest link.`);
+      throw new Error(`Can't reach ${new URL(url).host} (${e.message}). Check your internet connection and that the AI server is running (EC2 instance started / Colab notebook open). If the name can't be resolved, use the http://<IP>:8000 address in Settings.`);
     throw e;
   }
 }
@@ -393,9 +393,15 @@ function poll(job) {
       }
       if (s.status === 'failed') { job.status = 'failed'; saveHistory(job); $('#generate').disabled = false; return showError(s.error || 'Generation failed'); }
     } catch (e) {
-      if (++failures >= 5) { $('#generate').disabled = false; return showError(e.message); }
+      // The server keeps working even if the phone loses connection, so keep checking for ~10 minutes.
+      failures++;
+      if (failures >= 120 || /^HTTP 4\d\d/.test(e.message)) {
+        $('#generate').disabled = false;
+        return showError(e.message + ' — the server may still finish it: tap the model under "My models" to check again.');
+      }
+      $('#job-status').textContent = `Connection lost — retrying (${failures})…`;
     }
-    state.polling = setTimeout(tick, job.provider === 'demo' ? 400 : 3000);
+    state.polling = setTimeout(tick, job.provider === 'demo' ? 400 : failures ? 5000 : 3000);
   };
   tick();
 }
