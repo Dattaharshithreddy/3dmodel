@@ -72,7 +72,7 @@ TEX_OK=1
 # Optional speed-up; there is a pure-Python fallback if this fails.
 (cd Hunyuan3D-2/hy3dgen/texgen/differentiable_renderer && "$PY" -m pip install --no-build-isolation .) \
   || echo "(mesh_processor C++ speed-up not built — using the Python fallback)"
-if [ "$TEX_OK" = 1 ] && "$PY" -c "import custom_rasterizer" 2>/dev/null; then
+if [ "$TEX_OK" = 1 ] && "$PY" -c "import torch, custom_rasterizer"; then
   echo "✅ Textures enabled."
 else
   echo "⚠️  Texture extension failed to build — the server will make untextured (grey) models. Shapes work normally."
